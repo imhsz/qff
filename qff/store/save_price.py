@@ -31,7 +31,7 @@ import numpy as np
 import datetime
 import time
 from typing import Optional
-from qff.price.fetch import fetch_price, fetch_stock_xdxr, fetch_stock_block
+from qff.price.fetch import fetch_price, fetch_price_parallel, fetch_stock_xdxr, fetch_stock_block
 from qff.price.query import get_all_securities
 from qff.tools.date import get_real_trade_date, get_next_trade_day, util_get_date_gap, get_trade_days, get_pre_trade_day
 from qff.tools.mongo import DATABASE
@@ -39,11 +39,14 @@ from qff.tools.utils import util_to_json_from_pandas, util_code_tolist
 from pymongo.errors import PyMongoError
 
 
-def save_security_day(market='stock', security=None):
+def save_security_day(market='stock', security=None, parallel=True, batch_size=100, max_workers=5):
     """
     从通达信获取交易日数据，并保存到数据库中
     :param market: 市场类型，目前支持"stock/index/etf", 默认"stock".
     :param security: list or None, 证券列表
+    :param parallel: 是否使用并行处理，默认True
+    :param batch_size: 并行处理时每批处理的股票数量，默认100
+    :param max_workers: 并行处理时的最大线程数，默认5
     """
     try:
 
@@ -55,32 +58,168 @@ def save_security_day(market='stock', security=None):
         coll = DATABASE.get_collection(table_name)
         coll.create_index([("code", 1), ("date", 1)], unique=True)
         coll.create_index("date")
-
-        data_num = 0
-        data_list = []
-        start = time.perf_counter()
-        total = len(stock_list)
-        for item in range(total):
-            code = stock_list[item]
-            print_progress(item, total, start, code)
-
-            try:
-                last_recode = coll.find_one({'code': code}, sort=[('date', -1)])
-                start_date = last_recode['date']
-            except TypeError or PyMongoError:
-                start_date = '1990-01-01'
-                last_recode = None
-
-            if start_date != end_date:
+        
+        if not parallel:
+            # 原来的串行处理代码
+            data_num = 0
+            data_list = []
+            start = time.perf_counter()
+            total = len(stock_list)
+            for item in range(total):
+                code = stock_list[item]
+                print_progress(item, total, start, code)
+                
                 try:
-                    # start_date = get_next_trade_day(start_date)
-                    # print('Trying updating {} from {}'.format(code, start_date))
-                    data = fetch_price(code, freq='day', market=market, start=start_date)
-                    if data is None or len(data) == 0:
-                        # 如果每日更新时遇见连续停牌股票，则fetch_price返回空，
-                        # 如果start_date不为'1990-01-01'
-                        # 需要将数据库中最后一条记录的收盘价，用于生成停牌日数据
+                    last_recode = coll.find_one({'code': code}, sort=[('date', -1)])
+                    start_date = last_recode['date']
+                except TypeError or PyMongoError:
+                    start_date = '1990-01-01'
+                    last_recode = None
+
+                if start_date != end_date:
+                    try:
+                        # start_date = get_next_trade_day(start_date)
+                        # print('Trying updating {} from {}'.format(code, start_date))
+                        data = fetch_price(code, freq='day', market=market, start=start_date)
+                        if data is None or len(data) == 0:
+                            # 如果每日更新时遇见连续停牌股票，则fetch_price返回空，
+                            # 如果start_date不为'1990-01-01'
+                            # 需要将数据库中最后一条记录的收盘价，用于生成停牌日数据
+                            if start_date > '1990-01-01':
+                                data = pd.DataFrame(
+                                    index=pd.Index(get_trade_days(start_date, end_date), name='date'),
+                                    columns=['code', 'open', 'close', 'low', 'high', 'vol', 'amount']
+                                )
+                                data['code'] = code
+                                data[['open', 'close', 'high', 'low']] = last_recode['close']
+                                data[['vol', 'amount']] = 0
+                            else:
+                                print('股票{}无历史日数据！可能是未上市新股!'.format(code))
+                                continue
+
+                        else:
+
+                            data = data.loc[:end_date]
+                            if start_date == '1990-01-01':
+                                start_date = data.index[0]   # fix bug like :updating 603125 data error!
+                                                             # Exception:'1990-01-01'
+
+                            dl = get_trade_days(start_date, end_date)
+
+                            if len(dl) > len(data):
+                                # 存在停牌日数据
+                                dl_df = pd.DataFrame(index=pd.Index(dl, name='date'))
+                                data = dl_df.join(data).sort_index()
+
+                                data.code.fillna(value=code, inplace=True)
+
+                                if start_date in data.index: # 检查 start_date 是否存在于索引中
+                                    if pd.isna(data.loc[start_date, 'close']) and last_recode is not None:
+                                        data.loc[start_date, 'close'] = last_recode['close']
+
+                                data.close.fillna(method='ffill', inplace=True)
+
+                                data = data.fillna(method='bfill', axis=1)
+                                data.vol.fillna(value=0, inplace=True)
+                                data.amount.fillna(value=0, inplace=True)
+                                data = data.fillna(method='ffill', axis=1)
+
                         if start_date > '1990-01-01':
+                            if start_date in data.index: # 检查 start_date 是否存在于索引中
+                                data.drop(start_date, inplace=True)
+
+                        data.reset_index(inplace=True)
+                        data_num += len(data)
+                        data_list.append(data)
+                        if data_num > 2000:
+                            data_batch = pd.concat(data_list)
+                            data_num = 0
+                            data_list.clear()
+                            coll.insert_many(util_to_json_from_pandas(data_batch))
+
+                    except Exception as e:
+                        print(f'updating {code} data error!')
+                        print('Exception:' + str(e))
+
+            if data_num > 0:
+                data = pd.concat(data_list)
+                coll.insert_many(util_to_json_from_pandas(data))
+        else:
+            # 并行处理代码
+            start = time.perf_counter()
+            total = len(stock_list)
+            
+            # 获取每只股票的最后一条记录日期
+            code_start_dates = {}
+            code_last_records = {}
+            for code in stock_list:
+                try:
+                    last_recode = coll.find_one({'code': code}, sort=[('date', -1)])
+                    if last_recode:
+                        code_start_dates[code] = last_recode['date']
+                        code_last_records[code] = last_recode
+                    else:
+                        code_start_dates[code] = '1990-01-01'
+                        code_last_records[code] = None
+                except Exception:
+                    code_start_dates[code] = '1990-01-01'
+                    code_last_records[code] = None
+            
+            # 筛选需要更新的股票
+            need_update_codes = [code for code in stock_list if code_start_dates[code] != end_date]
+            
+            # 分批处理
+            for batch_start in range(0, len(need_update_codes), batch_size):
+                batch_codes = need_update_codes[batch_start:batch_start+batch_size]
+                print(f"正在并行处理第 {batch_start // batch_size + 1}/{(len(need_update_codes) + batch_size - 1) // batch_size} 批，共 {len(batch_codes)} 只股票")
+                
+                # 并行获取数据
+                results = fetch_price_parallel(batch_codes, freq='day', market=market, 
+                                             start=None, max_workers=max_workers)
+                
+                # 处理和保存数据
+                data_list = []
+                for code in batch_codes:
+                    print_progress(batch_start + batch_codes.index(code), total, start, code)
+                    
+                    try:
+                        start_date = code_start_dates[code]
+                        last_recode = code_last_records[code]
+                        
+                        if code in results:
+                            data = results[code]
+                            data = data.loc[:end_date]
+                            
+                            if start_date == '1990-01-01':
+                                start_date = data.index[0] if len(data) > 0 else start_date
+                                
+                            dl = get_trade_days(start_date, end_date)
+                            
+                            if len(dl) > len(data):
+                                # 存在停牌日数据
+                                dl_df = pd.DataFrame(index=pd.Index(dl, name='date'))
+                                data = dl_df.join(data).sort_index()
+                                
+                                data.code.fillna(value=code, inplace=True)
+                                
+                                if start_date in data.index:
+                                    if pd.isna(data.loc[start_date, 'close']) and last_recode is not None:
+                                        data.loc[start_date, 'close'] = last_recode['close']
+                                
+                                data.close.fillna(method='ffill', inplace=True)
+                                data = data.fillna(method='bfill', axis=1)
+                                data.vol.fillna(value=0, inplace=True)
+                                data.amount.fillna(value=0, inplace=True)
+                                data = data.fillna(method='ffill', axis=1)
+                            
+                            if start_date > '1990-01-01':
+                                if start_date in data.index:
+                                    data.drop(start_date, inplace=True)
+                            
+                            data.reset_index(inplace=True)
+                            data_list.append(data)
+                        elif start_date > '1990-01-01' and last_recode is not None:
+                            # 股票持续停牌，生成停牌日数据
                             data = pd.DataFrame(
                                 index=pd.Index(get_trade_days(start_date, end_date), name='date'),
                                 columns=['code', 'open', 'close', 'low', 'high', 'vol', 'amount']
@@ -88,57 +227,24 @@ def save_security_day(market='stock', security=None):
                             data['code'] = code
                             data[['open', 'close', 'high', 'low']] = last_recode['close']
                             data[['vol', 'amount']] = 0
+                            
+                            if start_date in data.index:
+                                data.drop(start_date, inplace=True)
+                                
+                            data.reset_index(inplace=True)
+                            data_list.append(data)
                         else:
-                            print('股票{}无历史日数据！可能是未上市新股!'.format(code))
-                            continue
-
-                    else:
-
-                        data = data.loc[:end_date]
-                        if start_date == '1990-01-01':
-                            start_date = data.index[0]   # fix bug like :updating 603125 data error!
-                                                         # Exception:'1990-01-01'
-
-                        dl = get_trade_days(start_date, end_date)
-
-                        if len(dl) > len(data):
-                            # 存在停牌日数据
-                            dl_df = pd.DataFrame(index=pd.Index(dl, name='date'))
-                            data = dl_df.join(data).sort_index()
-
-                            data.code.fillna(value=code, inplace=True)
-
-                            if start_date in data.index: # 检查 start_date 是否存在于索引中
-                                if pd.isna(data.loc[start_date, 'close']) and last_recode is not None:
-                                    data.loc[start_date, 'close'] = last_recode['close']
-
-                            data.close.fillna(method='ffill', inplace=True)
-
-                            data = data.fillna(method='bfill', axis=1)
-                            data.vol.fillna(value=0, inplace=True)
-                            data.amount.fillna(value=0, inplace=True)
-                            data = data.fillna(method='ffill', axis=1)
-
-                    if start_date > '1990-01-01':
-                        if start_date in data.index: # 检查 start_date 是否存在于索引中
-                            data.drop(start_date, inplace=True)
-
-                    data.reset_index(inplace=True)
-                    data_num += len(data)
-                    data_list.append(data)
-                    if data_num > 2000:
-                        data_batch = pd.concat(data_list)
-                        data_num = 0
-                        data_list.clear()
+                            print(f'股票{code}无法获取数据或无历史日数据！')
+                    except Exception as e:
+                        print(f'updating {code} data error!')
+                        print('Exception:' + str(e))
+                
+                # 保存这一批数据
+                if data_list:
+                    data_batch = pd.concat(data_list)
+                    if len(data_batch) > 0:
                         coll.insert_many(util_to_json_from_pandas(data_batch))
-
-                except Exception as e:
-                    print(f'updating {code} data error!')
-                    print('Exception:' + str(e))
-
-        if data_num > 0:
-            data = pd.concat(data_list)
-            coll.insert_many(util_to_json_from_pandas(data))
+                    print(f"保存了 {len(data_batch)} 条记录")
 
         print(f'\n==== SUCCESS SAVE {table_name.upper()} DATA! ====')
     except EOFError:
@@ -146,14 +252,19 @@ def save_security_day(market='stock', security=None):
     except Exception as e:
         print(" \nError save_security_day exception!")
         print(str(e))
+        import traceback
+        print(traceback.format_exc())
 
 
-def save_security_min(market='stock', freq='1min', security=None):
+def save_security_min(market='stock', freq='1min', security=None, parallel=True, batch_size=100, max_workers=5):
     """
     从通达信获取交易日数据，并保存到数据库中
     :param market: 市场类型，目前支持"stock/index/etf", 默认"stock".
     :param freq: 分钟频率，支持1min/5min/15min/30min/60min.
     :param security: list or None, 证券列表
+    :param parallel: 是否使用并行处理，默认True
+    :param batch_size: 并行处理时每批处理的股票数量，默认100
+    :param max_workers: 并行处理时的最大线程数，默认5
     """
     if freq not in ["1min", "5min", "15min", "30min", "60min"] or\
        market not in ["stock", "index", "etf"]:
@@ -162,55 +273,110 @@ def save_security_min(market='stock', freq='1min', security=None):
 
     try:
         end_date = now_time()
-        # stock_list = fetch_stock_list(market).index.to_list()
-        # stock_list = get_all_securities(market=market)
         stock_list = get_all_securities(market=market) if security is None else security
         table_name = market + '_min'
         print(f'==== NOW SAVE {market.upper()}_{freq.upper()} DATA =====')
         coll = DATABASE.get_collection(table_name)
         coll.create_index([("type", 1), ("code", 1), ("datetime", 1)], unique=True)
 
-        data_num = 0
-        data_list = []
+        if not parallel:
+            # 原来的串行处理代码
+            data_num = 0
+            data_list = []
 
-        start = time.perf_counter()
-        total = len(stock_list)
-        for item in range(total):
-            code = stock_list[item]
-            print_progress(item, total, start, code)
+            start = time.perf_counter()
+            total = len(stock_list)
+            for item in range(total):
+                code = stock_list[item]
+                print_progress(item, total, start, code)
 
-            try:
-                start_date = coll.find_one({'type': freq, 'code': code}, sort=[('datetime', -1)])['datetime']
-                if start_date is None or start_date == 'nan':
-                    raise TypeError
-            except TypeError or PyMongoError:
-                start_date = '1990-01-01'
-
-            if start_date != end_date:
                 try:
-                    start_date = get_next_trade_day(start_date)
-                    # print('Trying updating {} {} data from {}'.format(code, freq, start_date))
-                    data = fetch_price(code, freq=freq, market=market, start=start_date)
-                    if data is None or len(data) == 0:
-                        continue
-                    data = data.loc[:end_date]
-                    data.reset_index(inplace=True)
-                    data['type'] = freq
+                    start_date = coll.find_one({'type': freq, 'code': code}, sort=[('datetime', -1)])['datetime']
+                    if start_date is None or start_date == 'nan':
+                        raise TypeError
+                except TypeError or PyMongoError:
+                    start_date = '1990-01-01'
 
-                    data_num += len(data)
-                    data_list.append(data)
-                    if data_num > 2000:
-                        data = pd.concat(data_list)
-                        data_num = 0
-                        data_list.clear()
-                        coll.insert_many(util_to_json_from_pandas(data))
+                if start_date != end_date:
+                    try:
+                        start_date = get_next_trade_day(start_date)
+                        # print('Trying updating {} {} data from {}'.format(code, freq, start_date))
+                        data = fetch_price(code, freq=freq, market=market, start=start_date)
+                        if data is None or len(data) == 0:
+                            continue
+                        data = data.loc[:end_date]
+                        data.reset_index(inplace=True)
+                        data['type'] = freq
 
-                except Exception as e:
-                    print(f'\nupdating {code} {freq} data error!')
-                    print('Exception:' + str(e))
-        if data_num > 0:
-            data = pd.concat(data_list)
-            coll.insert_many(util_to_json_from_pandas(data))
+                        data_num += len(data)
+                        data_list.append(data)
+                        if data_num > 2000:
+                            data = pd.concat(data_list)
+                            data_num = 0
+                            data_list.clear()
+                            coll.insert_many(util_to_json_from_pandas(data))
+
+                    except Exception as e:
+                        print(f'\nupdating {code} {freq} data error!')
+                        print('Exception:' + str(e))
+            if data_num > 0:
+                data = pd.concat(data_list)
+                coll.insert_many(util_to_json_from_pandas(data))
+        else:
+            # 并行处理代码
+            start = time.perf_counter()
+            total = len(stock_list)
+            
+            # 获取每只股票的最后一条记录日期
+            code_start_dates = {}
+            for code in stock_list:
+                try:
+                    doc = coll.find_one({'type': freq, 'code': code}, sort=[('datetime', -1)])
+                    if doc:
+                        code_start_dates[code] = doc['datetime']
+                    else:
+                        code_start_dates[code] = '1990-01-01'
+                except Exception:
+                    code_start_dates[code] = '1990-01-01'
+            
+            # 筛选需要更新的股票
+            need_update_codes = [code for code in stock_list if code_start_dates[code] != end_date]
+            
+            # 分批处理
+            for batch_start in range(0, len(need_update_codes), batch_size):
+                batch_codes = need_update_codes[batch_start:batch_start+batch_size]
+                print(f"正在并行处理第 {batch_start // batch_size + 1}/{(len(need_update_codes) + batch_size - 1) // batch_size} 批，共 {len(batch_codes)} 只股票")
+                
+                # 并行获取数据
+                results = fetch_price_parallel(batch_codes, freq=freq, market=market, 
+                                              max_workers=max_workers)
+                
+                # 处理和保存数据
+                data_list = []
+                for code in batch_codes:
+                    print_progress(batch_start + batch_codes.index(code), total, start, code)
+                    
+                    try:
+                        start_date = get_next_trade_day(code_start_dates[code])
+                        
+                        if code in results:
+                            data = results[code]
+                            if data is not None and len(data) > 0:
+                                data = data.loc[:end_date]
+                                data.reset_index(inplace=True)
+                                data['type'] = freq
+                                data_list.append(data)
+                    
+                    except Exception as e:
+                        print(f'\nupdating {code} {freq} data error!')
+                        print('Exception:' + str(e))
+                
+                # 保存这一批数据
+                if data_list:
+                    data_batch = pd.concat(data_list)
+                    if len(data_batch) > 0:
+                        coll.insert_many(util_to_json_from_pandas(data_batch))
+                    print(f"保存了 {len(data_batch)} 条记录")
 
         print(f'\n==== SUCCESS SAVE {table_name.upper()} {freq} DATA! ====')
     except EOFError:
@@ -218,6 +384,8 @@ def save_security_min(market='stock', freq='1min', security=None):
     except Exception as e:
         print(f"\nError save_security_min exception!:{market.upper()} {freq.upper()} DATA")
         print(e)
+        import traceback
+        print(traceback.format_exc())
 
 
 def save_stock_xdxr(security=None):

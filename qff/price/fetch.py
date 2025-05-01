@@ -32,12 +32,15 @@ from pytdx.hq import TdxHq_API
 from retrying import retry
 from qff.tools.date import is_trade_day, get_trade_gap, get_real_trade_date
 from qff.tools.logs import log
-from qff.tools.tdx import get_best_ip, select_market_code, select_index_code
+from qff.tools.tdx import get_best_ip, select_market_code, select_index_code, stock_ip_list
 import traceback
+import concurrent.futures
+from functools import partial
+import time
 
 
-__all__ = ["fetch_price", "fetch_ticks", "fetch_current_ticks", "fetch_today_transaction",
-           "fetch_today_min_curve", "fetch_stock_xdxr", "fetch_stock_block"]
+__all__ = ["fetch_price", "fetch_price_parallel", "fetch_ticks", "fetch_current_ticks",
+           "fetch_today_transaction", "fetch_today_min_curve", "fetch_stock_xdxr", "fetch_stock_block"]
 
 
 def _select_freq(freq):
@@ -438,6 +441,84 @@ def fetch_stock_block():
         else:
             log.error("fetch_stock_block: 错误！")
             return None
+
+
+def fetch_price_parallel(codes, count=None, freq='day', market='stock', start=None, max_workers=5, max_retry=3):
+    """
+    并行从多个tdx服务器上获取多只股票的曲线数据，按天或者分钟，返回数据格式为 Dict[股票代码, DataFrame]
+
+    :param codes: 股票代码列表
+    :param count: 返回的结果集的行数, 即表示获取至当前时刻之前几个frequency的数据,-1表示所有数据
+    :param freq: 单位时间长度, 天或者分钟, 现在支持，day/week/month/quarter/year/1m/5m/15m/30m/60m
+    :param market: 市场类型，目前支持"stock/index/etf", 默认"stock"
+    :param start: 开始日期，不带分钟信息
+    :param max_workers: 最大线程数，默认5
+    :param max_retry: 单个股票失败后的最大重试次数，默认3
+
+    :type codes: list
+    :type count: int
+    :type freq: str
+    :type market: str
+    :type start: str
+    :type max_workers: int
+    :type max_retry: int
+
+    :return: Dict[股票代码, DataFrame]，每个股票代码对应一个DataFrame
+    """
+    # 获取可用IP列表
+    available_ips = []
+    for ip_info in stock_ip_list[:20]:  # 只检查前20个IP，加快速度
+        try:
+            ip, port = ip_info['ip'], ip_info['port']
+            api = TdxHq_API()
+            with api.connect(ip, port, timeout=1):  # 设置短超时
+                if len(api.get_security_list(0, 1)) > 0:
+                    available_ips.append((ip, port))
+                    if len(available_ips) >= max_workers:
+                        break
+        except Exception:
+            continue
+    
+    if not available_ips:
+        log.error("没有可用的通达信服务器IP")
+        return {}
+    
+    # 定义单个线程的工作函数
+    def _fetch_single_stock(code, ip_port_pair, retry_count=0):
+        ip, port = ip_port_pair
+        try:
+            api = TdxHq_API()
+            with api.connect(ip, port):
+                return code, fetch_price(code, count, freq, market, start)
+        except Exception as e:
+            log.warning(f"使用IP {ip}:{port} 获取 {code} 数据失败: {e}")
+            # 如果还有重试次数，换一个IP重试
+            if retry_count < max_retry and len(available_ips) > 0:
+                next_ip_port = available_ips[retry_count % len(available_ips)]
+                time.sleep(0.5)  # 短暂延迟后重试
+                return _fetch_single_stock(code, next_ip_port, retry_count + 1)
+            return code, None
+    
+    # 并行执行
+    results = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(max_workers, len(available_ips))) as executor:
+        # 为每个股票分配一个IP
+        tasks = []
+        for i, code in enumerate(codes):
+            ip_port = available_ips[i % len(available_ips)]
+            tasks.append(executor.submit(_fetch_single_stock, code, ip_port))
+        
+        # 收集结果
+        for future in concurrent.futures.as_completed(tasks):
+            try:
+                code, data = future.result()
+                if data is not None:
+                    results[code] = data
+            except Exception as e:
+                log.error(f"处理结果时发生异常: {e}")
+    
+    log.info(f"并行获取数据完成，成功率: {len(results)}/{len(codes)}")
+    return results
 
 
 if __name__ == '__main__':
