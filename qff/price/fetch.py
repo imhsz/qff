@@ -32,11 +32,12 @@ from pytdx.hq import TdxHq_API
 from retrying import retry
 from qff.tools.date import is_trade_day, get_trade_gap, get_real_trade_date
 from qff.tools.logs import log
-from qff.tools.tdx import get_best_ip, select_market_code, select_index_code, stock_ip_list
+from qff.tools.tdx import get_best_ip, select_market_code, select_index_code, stock_ip_list, select_best_ip_list
 import traceback
 import concurrent.futures
 from functools import partial
 import time
+import random
 
 
 __all__ = ["fetch_price", "fetch_price_parallel", "fetch_ticks", "fetch_current_ticks",
@@ -85,8 +86,6 @@ def _calc_today_min_len():
         elif 0 < interval <= 120:
             data_len = interval
         elif 120 < interval <= 210:
-            data_len = 120
-        elif 210 < interval <= 330:
             data_len = interval - 120
         else:
             data_len = 240
@@ -453,71 +452,114 @@ def fetch_price_parallel(codes, count=None, freq='day', market='stock', start=No
     :param market: 市场类型，目前支持"stock/index/etf", 默认"stock"
     :param start: 开始日期，不带分钟信息
     :param max_workers: 最大线程数，默认5
-    :param max_retry: 单个股票失败后的最大重试次数，默认3
-
-    :type codes: list
-    :type count: int
-    :type freq: str
-    :type market: str
-    :type start: str
-    :type max_workers: int
-    :type max_retry: int
-
-    :return: Dict[股票代码, DataFrame]，每个股票代码对应一个DataFrame
+    :param max_retry: 单个股票失败后最大重试次数，默认3
+    :return: Dict[股票代码, DataFrame]
     """
-    # 获取可用IP列表
-    available_ips = []
-    for ip_info in stock_ip_list[:20]:  # 只检查前20个IP，加快速度
-        try:
-            ip, port = ip_info['ip'], ip_info['port']
-            api = TdxHq_API()
-            with api.connect(ip, port, timeout=1):  # 设置短超时
-                if len(api.get_security_list(0, 1)) > 0:
-                    available_ips.append((ip, port))
-                    if len(available_ips) >= max_workers:
-                        break
-        except Exception:
-            continue
-    
-    if not available_ips:
-        log.error("没有可用的通达信服务器IP")
+    if not codes:
         return {}
     
-    # 定义单个线程的工作函数
-    def _fetch_single_stock(code, ip_port_pair, retry_count=0):
-        ip, port = ip_port_pair
-        try:
-            api = TdxHq_API()
-            with api.connect(ip, port):
-                return code, fetch_price(code, count, freq, market, start)
-        except Exception as e:
-            log.warning(f"使用IP {ip}:{port} 获取 {code} 数据失败: {e}")
-            # 如果还有重试次数，换一个IP重试
-            if retry_count < max_retry and len(available_ips) > 0:
-                next_ip_port = available_ips[retry_count % len(available_ips)]
-                time.sleep(0.5)  # 短暂延迟后重试
-                return _fetch_single_stock(code, next_ip_port, retry_count + 1)
-            return code, None
+    # 获取最佳服务器列表
+    best_ips = select_best_ip_list(n=max_workers)
+    if not best_ips:
+        log.error("无法获取可用的 TDX 服务器")
+        return {}
     
-    # 并行执行
+    # 使用线程池并行获取数据
     results = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(max_workers, len(available_ips))) as executor:
-        # 为每个股票分配一个IP
-        tasks = []
+    failed_codes = []  # 记录获取失败的股票
+    
+    def _fetch_single_stock(code, ip_port_pair, retry_count=0):
+        """单个股票获取函数，支持重试"""
+        try:
+            ip, port = ip_port_pair
+            api = TdxHq_API(heartbeat=True)  # 启用心跳检测
+            with api.connect(ip, port, time_out=10):  # 设置超时时间为10秒
+                ret = []
+                _start = 0
+                _count = 40800 if count is None or count <= 0 else count
+                
+                while _count > 0:
+                    _len = 800 if _count > 800 else _count
+                    if market in ['stock', 'etf']:
+                        df = api.get_security_bars(freq, select_market_code(code), code, _start, _len)
+                    elif market == 'index':
+                        df = api.get_index_bars(freq, select_index_code(code), code, _start, _len)
+                    else:
+                        return None
+                        
+                    if df is not None and len(df) > 0:
+                        df = api.to_df(df)
+                        ret.append(df)
+                        _start += _len
+                        _count -= _len
+                    else:
+                        break
+                
+                if len(ret) > 0:
+                    data = pd.concat(ret, axis=0, sort=False) if len(ret) > 1 else ret[0]
+                    
+                    if int(freq) in [0, 1, 2, 3, 8]:  # 分钟数据
+                        data = data.drop(['year', 'month', 'day', 'hour', 'minute'], axis=1, inplace=False)
+                        data = data.assign(datetime=data['datetime'] + ':00')
+                        data.set_index('datetime', inplace=True)
+                    else:
+                        data = data.assign(date=data['datetime'].apply(lambda x: str(x[0:10])))
+                        data = data.drop(['year', 'month', 'day', 'hour', 'minute', 'datetime'], axis=1, inplace=False)
+                        data.set_index('date', inplace=True)
+                    
+                    data.sort_index(inplace=True)
+                    data.insert(0, 'code', code)
+                    if start is not None:
+                        data = data.loc[start:]
+                    return data
+                else:
+                    return None
+                    
+        except Exception as e:
+            error_msg = str(e)
+            log.error(f"获取 {code} 数据时出错 (重试 {retry_count}/{max_retry}): {error_msg}")
+            
+            # 超时或连接错误时尝试重试
+            if retry_count < max_retry and ("timed out" in error_msg or 
+                                          "连接失败" in error_msg or 
+                                          "timeout" in error_msg or
+                                          "connection" in error_msg.lower()):
+                # 随机等待一段时间后重试，避免所有线程同时重试
+                time.sleep(0.5 + random.random())
+                # 尝试使用不同的服务器
+                new_ip_port = random.choice(best_ips)
+                log.info(f"重试 {code} 使用服务器 {new_ip_port[0]}:{new_ip_port[1]}")
+                return _fetch_single_stock(code, new_ip_port, retry_count + 1)
+            return None
+    
+    # 将股票分配给不同的服务器
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # 创建任务列表
+        future_to_code = {}
         for i, code in enumerate(codes):
-            ip_port = available_ips[i % len(available_ips)]
-            tasks.append(executor.submit(_fetch_single_stock, code, ip_port))
+            ip_port = best_ips[i % len(best_ips)]
+            future = executor.submit(_fetch_single_stock, code, ip_port)
+            future_to_code[future] = code
         
         # 收集结果
-        for future in concurrent.futures.as_completed(tasks):
+        for future in concurrent.futures.as_completed(future_to_code):
+            code = future_to_code[future]
             try:
-                code, data = future.result()
+                data = future.result()
                 if data is not None:
                     results[code] = data
+                else:
+                    failed_codes.append(code)
+                    log.warning(f"获取 {code} 数据失败或返回为空")
             except Exception as e:
-                log.error(f"处理结果时发生异常: {e}")
+                failed_codes.append(code)
+                log.error(f"处理 {code} 数据时发生异常: {str(e)}")
     
-    log.info(f"并行获取数据完成，成功率: {len(results)}/{len(codes)}")
+    if failed_codes:
+        failed_count = len(failed_codes)
+        total_count = len(codes)
+        log.warning(f"共有 {failed_count}/{total_count} ({failed_count/total_count*100:.1f}%) 的股票数据获取失败")
+        
     return results
 
 

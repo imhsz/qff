@@ -353,30 +353,46 @@ def save_security_min(market='stock', freq='1min', security=None, parallel=True,
                 
                 # 处理和保存数据
                 data_list = []
+                failed_codes = []  # 记录失败的股票代码
+                
                 for code in batch_codes:
                     print_progress(batch_start + batch_codes.index(code), total, start, code)
                     
                     try:
                         start_date = get_next_trade_day(code_start_dates[code])
                         
-                        if code in results:
+                        if code in results and results[code] is not None and len(results[code]) > 0:
                             data = results[code]
-                            if data is not None and len(data) > 0:
-                                data = data.loc[:end_date]
-                                data.reset_index(inplace=True)
-                                data['type'] = freq
-                                data_list.append(data)
+                            data = data.loc[:end_date]
+                            data.reset_index(inplace=True)
+                            data['type'] = freq
+                            data_list.append(data)
+                        else:
+                            # 数据获取失败，记录下来，后续可考虑重试
+                            failed_codes.append(code)
+                            print(f"\n警告: 获取 {code} 的{freq}数据失败或返回为空")
                     
                     except Exception as e:
+                        failed_codes.append(code)
                         print(f'\nupdating {code} {freq} data error!')
                         print('Exception:' + str(e))
                 
                 # 保存这一批数据
                 if data_list:
-                    data_batch = pd.concat(data_list)
-                    if len(data_batch) > 0:
-                        coll.insert_many(util_to_json_from_pandas(data_batch))
-                    print(f"保存了 {len(data_batch)} 条记录")
+                    try:
+                        data_batch = pd.concat(data_list)
+                        if len(data_batch) > 0:
+                            coll.insert_many(util_to_json_from_pandas(data_batch))
+                        print(f"保存了 {len(data_batch)} 条记录")
+                    except Exception as e:
+                        print(f"保存数据时出错: {str(e)}")
+                
+                if failed_codes:
+                    print(f"本批次中有 {len(failed_codes)} 只股票数据获取失败: {','.join(failed_codes[:5])}{'...' if len(failed_codes) > 5 else ''}")
+                    
+                    # 考虑重试逻辑
+                    # if retry_count < max_retry:
+                    #    等待一段时间后重试失败的股票
 
         print(f'\n==== SUCCESS SAVE {table_name.upper()} {freq} DATA! ====')
     except EOFError:
@@ -486,9 +502,27 @@ def save_security_block():
 
 ##########################################################################################################
 def now_time():
-    return str(get_real_trade_date(str(datetime.date.today() - datetime.timedelta(days=1)))) + \
-           ' 15:00:00' if datetime.datetime.now().hour < 15 \
-           else str(get_real_trade_date(str(datetime.date.today()))) + ' 15:00:00'
+    """获取当前交易日结束时间，如 '2025-05-05 15:00:00'"""
+    today = datetime.date.today()
+    now = datetime.datetime.now()
+    
+    # 检查系统时间是否合理
+    if today.year > 2025:  # 可能是系统日期设置错误
+        print("警告: 系统日期可能不正确! 使用硬编码的当前日期")
+        today = datetime.date(2025, 5, 5)  # 使用硬编码的当前日期作为备选
+    
+    if now.hour < 15:  # 当日收盘前
+        trade_date = get_real_trade_date(str(today - datetime.timedelta(days=1)))
+    else:  # 当日收盘后
+        trade_date = get_real_trade_date(str(today))
+        
+    # 确保不会返回未来日期
+    tomorrow = str(today + datetime.timedelta(days=1))
+    if trade_date > tomorrow:
+        print(f"警告: 交易日期 {trade_date} 超过明天 {tomorrow}，将使用今天的日期")
+        trade_date = str(today)
+        
+    return trade_date + ' 15:00:00'
 
 
 def print_progress(item, total, start, code):

@@ -30,6 +30,11 @@ from pytdx.hq import TdxHq_API
 from qff.tools.config import get_config, set_config
 from qff.tools.logs import log
 import json
+import time
+import pandas as pd
+import numpy as np
+import socket
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def select_market_code(code, market='stock'):
@@ -226,3 +231,85 @@ stock_ip_list = [
     {"ip": "113.105.142.162", "port": 7721},
     {"ip": "23.129.245.199", "port": 7721},
 ]
+
+
+def select_best_ip_list(n=5, timeout=1.0, ip_list=None):
+    """
+    选择多个最佳的服务器，用于并行连接
+    
+    :param n: 返回的服务器数量，默认5
+    :param timeout: 测试连接超时时间，默认1.0秒
+    :param ip_list: 指定要测试的IP列表，默认为None，使用内置的stock_ip_list
+    :return: list of tuple(ip, port)，最佳服务器IP和端口列表
+    """
+    if ip_list is None:
+        ip_list = stock_ip_list
+    
+    log.info(f"正在筛选最佳的 {n} 个通达信服务器...")
+    
+    # 先尝试从配置读取
+    default_ips = get_config(section='IPLIST', option='best_ips', default_value=None)
+    if default_ips:
+        try:
+            default_ips = json.loads(default_ips)
+            if isinstance(default_ips, list) and len(default_ips) >= n:
+                ip_ports = [(ip_port['ip'], ip_port['port']) for ip_port in default_ips[:n]]
+                log.info(f"从配置中获取到 {len(ip_ports)} 个服务器")
+                return ip_ports
+        except (json.JSONDecodeError, KeyError, TypeError):
+            log.warning("配置中的 best_ips 格式不正确，将重新选择")
+    
+    # 并行测试多个IP的响应时间
+    def test_connection(ip_port):
+        ip, port = ip_port['ip'], ip_port['port']
+        api = TdxHq_API()
+        try:
+            start = time.time()
+            with api.connect(ip, port, time_out=timeout):
+                if len(api.get_security_list(0, 1)) > 0:  # 测试连接有效性
+                    cost = time.time() - start
+                    return {'ip': ip, 'port': port, 'cost': cost}
+        except Exception:
+            pass
+        return None
+    
+    # 只测试前30个IP，避免耗时过长
+    test_ips = ip_list[:30]
+    results = []
+    
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(test_connection, ip_port) for ip_port in test_ips]
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                results.append(result)
+                if len(results) >= n:
+                    # 一旦找到足够数量的IP就停止等待其他测试
+                    for f in futures:
+                        if not f.done():
+                            f.cancel()
+                    break
+    
+    # 按响应时间排序
+    results.sort(key=lambda x: x['cost'])
+    
+    # 如果找不到足够的IP，使用默认的
+    if not results:
+        log.warning("未找到可用的通达信服务器，使用默认服务器")
+        return [(stock_ip_list[0]['ip'], stock_ip_list[0]['port'])]
+    
+    # 返回最快的n个
+    best_ips = results[:min(n, len(results))]
+    
+    # 转换为(ip, port)元组列表
+    ip_ports = [(ip_info['ip'], ip_info['port']) for ip_info in best_ips]
+    
+    # 保存到配置
+    try:
+        from qff.tools.config import set_config
+        set_config('IPLIST', 'best_ips', json.dumps(best_ips))
+    except Exception as e:
+        log.warning(f"保存最佳IP列表到配置文件失败: {str(e)}")
+    
+    log.info(f"已选择 {len(ip_ports)} 个最佳服务器")
+    return ip_ports
