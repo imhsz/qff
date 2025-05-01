@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 from pytdx.hq import TdxHq_API
 from qff.tools.config import get_config, set_config
 from qff.tools.logs import log
+import json
 
 
 def select_market_code(code, market='stock'):
@@ -119,7 +120,11 @@ def select_best_ip():
 
     default_ip = {'ip': None, 'port': None}
     default_ip = get_config(section='IPLIST', option='default', default_value=default_ip)
-    default_ip = eval(default_ip) if isinstance(default_ip, str) else default_ip
+    try:
+        default_ip = json.loads(default_ip) if isinstance(default_ip, str) else default_ip
+    except json.JSONDecodeError:
+        log.warning(f"Failed to parse default IP from config: {default_ip}. Resetting.")
+        default_ip = {'ip': None, 'port': None}
     assert isinstance(default_ip, dict)
     if default_ip['ip'] is None:
         best_stock_ip = get_best_ip_by_ping()
