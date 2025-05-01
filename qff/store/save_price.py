@@ -42,7 +42,7 @@ from pymongo.errors import PyMongoError
 def save_security_day(market='stock', security=None):
     """
     从通达信获取交易日数据，并保存到数据库中
-    :param market: 市场类型，目前支持“stock/index/etf", 默认“stock".
+    :param market: 市场类型，目前支持"stock/index/etf", 默认"stock".
     :param security: list or None, 证券列表
     """
     try:
@@ -108,8 +108,10 @@ def save_security_day(market='stock', security=None):
 
                             data.code.fillna(value=code, inplace=True)
 
-                            if np.isnan(data.loc[start_date, 'close']):
-                                data.loc[start_date, 'close'] = last_recode['close']
+                            if start_date in data.index: # 检查 start_date 是否存在于索引中
+                                if pd.isna(data.loc[start_date, 'close']) and last_recode is not None:
+                                    data.loc[start_date, 'close'] = last_recode['close']
+
                             data.close.fillna(method='ffill', inplace=True)
 
                             data = data.fillna(method='bfill', axis=1)
@@ -118,7 +120,8 @@ def save_security_day(market='stock', security=None):
                             data = data.fillna(method='ffill', axis=1)
 
                     if start_date > '1990-01-01':
-                        data.drop(start_date, inplace=True)  # start_date为数据库最后一条记录，避免重复插入
+                        if start_date in data.index: # 检查 start_date 是否存在于索引中
+                            data.drop(start_date, inplace=True)
 
                     data.reset_index(inplace=True)
                     data_num += len(data)
@@ -148,7 +151,7 @@ def save_security_day(market='stock', security=None):
 def save_security_min(market='stock', freq='1min', security=None):
     """
     从通达信获取交易日数据，并保存到数据库中
-    :param market: 市场类型，目前支持“stock/index/etf", 默认“stock".
+    :param market: 市场类型，目前支持"stock/index/etf", 默认"stock".
     :param freq: 分钟频率，支持1min/5min/15min/30min/60min.
     :param security: list or None, 证券列表
     """

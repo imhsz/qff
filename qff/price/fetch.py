@@ -33,6 +33,7 @@ from retrying import retry
 from qff.tools.date import is_trade_day, get_trade_gap, get_real_trade_date
 from qff.tools.logs import log
 from qff.tools.tdx import get_best_ip, select_market_code, select_index_code
+import traceback
 
 
 __all__ = ["fetch_price", "fetch_ticks", "fetch_current_ticks", "fetch_today_transaction",
@@ -98,7 +99,7 @@ def fetch_price(code, count=None, freq='day', market='stock', start=None):
     :param count: 返回的结果集的行数, 即表示获取至当前时刻之前几个frequency的数据,-1表示所有数据。
         与 start 二选一，不可同时使用，如果同时存在，start参数无效
     :param freq: 单位时间长度, 天或者分钟, 现在支持，day/week/month/quarter/year/1m/5m/15m/30m/60m ,默认值是day
-    :param market: 市场类型，目前支持“stock/index/etf", 默认“stock".
+    :param market: 市场类型，目前支持"stock/index/etf", 默认"stock".
     :param start: 开始日期，不带分钟信息。与 count 二选一，不可同时使用. 字符串或者 datetime.date 对象,如果 count
         和 start 参数都没有, 则取count=1,即获取最近一条数据。
 
@@ -166,7 +167,9 @@ def fetch_price(code, count=None, freq='day', market='stock', start=None):
                 return None
 
     except Exception as err:
-        log.error(f'fetch_price exception:{err}')
+        # log.error(f'fetch_price exception:{err}')
+        log.error(f'fetch_price exception for code {code}, market {market}, freq {freq}: {err}')
+        log.error(traceback.format_exc())
         return None
 
 
@@ -175,7 +178,7 @@ def fetch_today_min_curve(code, market='stock'):
     获取当天的分钟曲线，返回当前时间前的当日1分钟曲线数据，用于模拟交易环境
 
     :param code: 一支股票代码或者一个指数代码
-    :param market: 市场类型，目前支持“stock/index/etf", 默认“stock".
+    :param market: 市场类型，目前支持"stock/index/etf", 默认"stock".
 
     :type code: str
     :type market: str
@@ -193,7 +196,7 @@ def fetch_current_ticks(code, market='stock'):
     获取单个股票或指数当前时刻的ticks数据
 
     :param code: 一支股票代码或者一个指数代码
-    :param market: 市场类型，目前支持“stock"和”index", 默认“stock".
+    :param market: 市场类型，目前支持"stock"和"index", 默认"stock".
 
     :type code: str
     :type market: str
@@ -234,7 +237,7 @@ def fetch_ticks(code, market='stock'):
     获取股票或指数列表当前时刻的ticks数据
 
     :param code: 一支股票代码或者一个指数代码列表
-    :param market: 市场类型，目前支持“stock"和”index", 默认“stock".
+    :param market: 市场类型，目前支持"stock"和"index", 默认"stock".
 
     :type code: list
     :type market: str

@@ -61,7 +61,7 @@ def crawl_stock_list():
     sh = sh.iloc[:, [0, 1, 3]]
     sh.columns = pd.Index(['code', 'name', 'start'])
 
-    sz = ak.stock_info_sz_name_code(indicator="A股列表")
+    sz = ak.stock_info_sz_name_code()
     sz = sz.iloc[:, [1, 2, 3]]
     sz.columns = pd.Index(['code', 'name', 'start'])
 
