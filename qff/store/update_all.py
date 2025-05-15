@@ -42,34 +42,100 @@ import prettytable as pt
 import datetime
 import pandas as pd
 
+# 引入新的保存函数
+from qff.store.save_hot_info import save_limit_up, save_limit_down, save_block_trade, save_margin_detail
+from qff.store.save_block_info import (save_concept_list, save_concept_stocks, save_concept_daily,
+                                     save_industry_list, save_industry_stocks, save_industry_daily)
+from qff.store.save_special_info import (save_top_list, save_top_inst, save_restricted_release,
+                                        save_moneyflow_hsgt, save_moneyflow_stock, save_moneyflow_sector)
+
 
 def update_all(date=None):
+    """
+    更新所有财务数据
+    """
     if date is None:
         date = str(datetime.date.today())
-    log.info(f'====更新数据日期:{date} ==========')
 
-    # 判断是否需要初始化
-    colls = DATABASE.list_collection_names()
-    if 'stock_list' not in colls:
+    log.info('==== 开始更新数据 ==========')
+
+    # 初始化股票列表
+    try:
         init_stock_list()
-    if 'index_list' not in colls:
-        init_index_list()
-    if 'etf_list' not in colls:
-        init_etf_list()
+        init_block_list()
+    except Exception as e:
+        print(f"initialize stock list error: {e}")
 
-    save_stock_list()
-    for market_ in ['stock', 'index', 'etf']:
-        save_security_day(market_)
-        for freq_ in ["1min", "5min", "15min", "30min", "60min"]:
-            save_security_min(market=market_, freq=freq_)
+    # 更新股票基本信息
+    try:
+        save_stock_list()
+    except Exception as e:
+        print(f"updating stock list data error: {e}")
 
-    save_stock_xdxr()
-    save_report()
-    save_valuation_data()
-    save_mtss_data()
-    # save_index_stock()
-    # save_industry_stock()
-    save_security_block()
+    # 更新行情数据
+    try:
+        save_stock_day()
+        save_stock_block()
+    except Exception as e:
+        print(f"updating stock price data error: {e}")
+
+    # 更新最新财务数据
+    try:
+        save_stock_report()
+    except Exception as e:
+        print(f"updating stock report data error: {e}")
+
+    # 更新估值数据
+    try:
+        save_stock_valuation()
+    except Exception as e:
+        print(f"updating stock valuation data error: {e}")
+
+    # 更新融资融券数据
+    try:
+        save_mtss()
+    except Exception as e:
+        print(f"updating mtss data error: {e}")
+
+    # 更新分钟线数据
+    try:
+        save_stock_min()
+    except Exception as e:
+        print(f"updating stock min data error: {e}")
+
+    # 更新短线数据
+    try:
+        save_limit_up()
+        save_limit_down()
+        save_block_trade()
+        save_margin_detail()
+    except Exception as e:
+        print(f"updating hot_info data error: {e}")
+
+    # 更新概念板块和行业板块数据
+    try:
+        # 概念板块
+        concept_codes = save_concept_list()
+        save_concept_stocks()
+        save_concept_daily()
+        
+        # 行业板块
+        industry_codes = save_industry_list()
+        save_industry_stocks()
+        save_industry_daily()
+    except Exception as e:
+        print(f"updating block_info data error: {e}")
+
+    # 更新龙虎榜、解禁股、资金流向等数据
+    try:
+        save_top_list()
+        save_top_inst()
+        save_restricted_release()
+        save_moneyflow_hsgt()
+        save_moneyflow_stock()
+        save_moneyflow_sector()
+    except Exception as e:
+        print(f"updating special_info data error: {e}")
 
     log.info('==== 更新数据完成 ==========')
 
