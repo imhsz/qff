@@ -57,12 +57,30 @@ def save_limit_up(date=None):
         coll.create_index([('date', 1), ('code', 1)], unique=True)
         
         # 删除同一日期的旧数据
-        coll.delete_many({'date': date})
+        try:
+            delete_result = coll.delete_many({'date': date})
+            print(f"删除旧数据: {delete_result.deleted_count} 条记录")
+        except Exception as e:
+            print(f"删除旧数据时出错: {e}")
         
-        # 插入新数据
-        coll.insert_many(util_to_json_from_pandas(df))
+        # 使用upsert方式插入新数据，避免重复键错误
+        success_count = 0
+        error_count = 0
         
-        print(f'SUCCESS SAVE LIMIT_UP DATA, Total: {len(df)} records.')
+        for _, row in df.iterrows():
+            data = util_to_json_from_pandas(row.to_frame().T)[0]
+            try:
+                coll.replace_one(
+                    {'date': date, 'code': data['code']},
+                    data,
+                    upsert=True
+                )
+                success_count += 1
+            except Exception as e:
+                print(f"插入数据时出错 code={data['code']}: {e}")
+                error_count += 1
+        
+        print(f'SUCCESS SAVE LIMIT_UP DATA, Total: {success_count} records, Errors: {error_count}.')
     else:
         print('No LIMIT_UP data found.')
 
@@ -88,12 +106,30 @@ def save_limit_down(date=None):
         coll.create_index([('date', 1), ('code', 1)], unique=True)
         
         # 删除同一日期的旧数据
-        coll.delete_many({'date': date})
+        try:
+            delete_result = coll.delete_many({'date': date})
+            print(f"删除旧数据: {delete_result.deleted_count} 条记录")
+        except Exception as e:
+            print(f"删除旧数据时出错: {e}")
         
-        # 插入新数据
-        coll.insert_many(util_to_json_from_pandas(df))
+        # 使用upsert方式插入新数据，避免重复键错误
+        success_count = 0
+        error_count = 0
         
-        print(f'SUCCESS SAVE LIMIT_DOWN DATA, Total: {len(df)} records.')
+        for _, row in df.iterrows():
+            data = util_to_json_from_pandas(row.to_frame().T)[0]
+            try:
+                coll.replace_one(
+                    {'date': date, 'code': data['code']},
+                    data,
+                    upsert=True
+                )
+                success_count += 1
+            except Exception as e:
+                print(f"插入数据时出错 code={data['code']}: {e}")
+                error_count += 1
+        
+        print(f'SUCCESS SAVE LIMIT_DOWN DATA, Total: {success_count} records, Errors: {error_count}.')
     else:
         print('No LIMIT_DOWN data found.')
 
@@ -119,12 +155,40 @@ def save_block_trade(date=None):
         coll.create_index([('date', 1), ('code', 1), ('buyer', 1), ('seller', 1)], unique=True)
         
         # 删除同一日期的旧数据
-        coll.delete_many({'date': date})
+        try:
+            delete_result = coll.delete_many({'date': date})
+            print(f"删除旧数据: {delete_result.deleted_count} 条记录")
+        except Exception as e:
+            print(f"删除旧数据时出错: {e}")
         
-        # 插入新数据
-        coll.insert_many(util_to_json_from_pandas(df))
+        # 使用upsert方式插入新数据，避免重复键错误
+        success_count = 0
+        error_count = 0
         
-        print(f'SUCCESS SAVE BLOCK_TRADE DATA, Total: {len(df)} records.')
+        for _, row in df.iterrows():
+            data = util_to_json_from_pandas(row.to_frame().T)[0]
+            # 确保所有必要的字段都存在
+            required_fields = ['code', 'buyer', 'seller']
+            missing_fields = [field for field in required_fields if field not in data or data[field] is None]
+            
+            if missing_fields:
+                # 如果缺少任何必需字段，为其分配默认值
+                for field in missing_fields:
+                    data[field] = f"unknown_{field}" if field != 'code' else "000000"
+                print(f"记录缺少必要字段 {', '.join(missing_fields)}，已使用默认值")
+            
+            try:
+                coll.replace_one(
+                    {'date': date, 'code': data['code'], 'buyer': data['buyer'], 'seller': data['seller']},
+                    data,
+                    upsert=True
+                )
+                success_count += 1
+            except Exception as e:
+                print(f"插入数据时出错 code={data.get('code', 'unknown')}: {e}")
+                error_count += 1
+        
+        print(f'SUCCESS SAVE BLOCK_TRADE DATA, Total: {success_count} records, Errors: {error_count}.')
     else:
         print('No BLOCK_TRADE data found.')
 
@@ -150,11 +214,38 @@ def save_margin_detail(date=None):
         coll.create_index([('date', 1), ('code', 1)], unique=True)
         
         # 删除同一日期的旧数据
-        coll.delete_many({'date': date})
+        try:
+            delete_result = coll.delete_many({'date': date})
+            print(f"删除旧数据: {delete_result.deleted_count} 条记录")
+        except Exception as e:
+            print(f"删除旧数据时出错: {e}")
         
-        # 插入新数据
-        coll.insert_many(util_to_json_from_pandas(df))
+        # 确保code字段符合要求（无前缀，统一格式）
+        if 'code' in df.columns:
+            df['code'] = df['code'].apply(lambda x: str(x).split('.')[-1] if isinstance(x, str) else str(x))
         
-        print(f'SUCCESS SAVE MARGIN_DETAIL DATA, Total: {len(df)} records.')
+        # 使用upsert方式插入新数据，避免重复键错误
+        success_count = 0
+        error_count = 0
+        
+        for _, row in df.iterrows():
+            try:
+                data = util_to_json_from_pandas(row.to_frame().T)[0]
+                # 确保date字段存在且符合格式
+                if 'date' not in data or not data['date']:
+                    data['date'] = date
+                
+                coll.replace_one(
+                    {'date': data['date'], 'code': data['code']},
+                    data,
+                    upsert=True
+                )
+                success_count += 1
+            except Exception as e:
+                error_count += 1
+                code = row.get('code', 'unknown') if hasattr(row, 'get') else 'unknown'
+                print(f"插入数据时出错 code={code}: {e}")
+        
+        print(f'SUCCESS SAVE MARGIN_DETAIL DATA, Total: {success_count} records, Errors: {error_count}.')
     else:
         print('No MARGIN_DETAIL data found.') 

@@ -49,39 +49,67 @@ def fetch_top_list(date=None):
         if date is None:
             date = get_real_trade_date(datetime.date.today().strftime('%Y-%m-%d'))
         
-        # 使用akshare获取龙虎榜数据
-        df = ak.stock_em_lhb_detail(date=date)
+        # 尝试使用不同的API获取龙虎榜数据
+        try:
+            # 尝试使用stock_lhb_detail_em API
+            # 注意：此API需要使用start_date和end_date参数
+            df = ak.stock_lhb_detail_em(start_date=date.replace('-', ''), end_date=date.replace('-', ''))
+            log.info(f"使用 stock_lhb_detail_em API 获取龙虎榜数据")
+        except Exception as e1:
+            log.warning(f"使用 stock_lhb_detail_em API 失败: {str(e1)}")
+            try:
+                # 尝试其他龙虎榜相关API
+                df = ak.stock_lhb_stock_detail_em(date=date)
+                log.info(f"使用 stock_lhb_stock_detail_em API 获取龙虎榜数据")
+            except Exception as e2:
+                log.error(f"获取龙虎榜数据失败：所有API调用均失败: {str(e2)}")
+                return None
         
         if df is not None and len(df) > 0:
-            # 重命名列
+            # 更新重命名列以匹配新的API返回值
             columns_map = {
                 '序号': 'index', '代码': 'code', '名称': 'name',
-                '收盘价': 'close', '涨跌幅': 'pct_chg', '上榜原因': 'reason',
-                '解读': 'explanation', '成交额(万)': 'amount', 
-                '成交额占比(%)': 'amount_ratio', '成交量(手)': 'volume',
-                '流通市值(亿)': 'circ_mv', '总市值(亿)': 'total_mv',
-                '换手率(%)': 'turnover', '振幅(%)': 'amplitude',
-                '涨速(%)': 'speed', '换手率(%)': 'turnover',
-                '实力营业部买入额(万)': 'buy_amount', '实力营业部买入占总成交比例(%)': 'buy_ratio'
+                '上榜日': 'list_date', '解读': 'explanation', 
+                '收盘价': 'close', '涨跌幅': 'pct_chg',
+                '龙虎榜净买额': 'net_buy_amount', '龙虎榜买入额': 'buy_amount',
+                '龙虎榜卖出额': 'sell_amount', '龙虎榜成交额': 'amount',
+                '市场总成交额': 'total_amount', 
+                '净买额占总成交比': 'net_buy_ratio', 
+                '成交额占总成交比': 'amount_ratio',
+                '换手率': 'turnover', '流通市值': 'circ_mv',
+                '上榜原因': 'reason', 
+                '上榜后1日': 'after_1day', '上榜后2日': 'after_2day',
+                '上榜后5日': 'after_5day', '上榜后10日': 'after_10day'
             }
             
-            # 确保所有需要的列都存在
+            # 确保所有需要的列都存在，避免在迭代过程中修改字典
+            safe_columns_map = {}
             for en, cn in columns_map.items():
-                if en not in df.columns:
+                if en in df.columns:
+                    safe_columns_map[en] = cn
+                else:
                     log.warning(f"龙虎榜数据中缺少列: {en}")
-                    columns_map.pop(en)
             
-            df = df.rename(columns=columns_map)
+            df = df.rename(columns=safe_columns_map)
             
             # 添加日期列
             df['date'] = date
             
             # 处理数据格式
-            for col in ['close', 'pct_chg', 'amount', 'amount_ratio', 'volume', 
-                       'circ_mv', 'total_mv', 'turnover', 'amplitude', 'speed', 
-                       'buy_amount', 'buy_ratio']:
+            for col in ['close', 'pct_chg', 'net_buy_amount', 'buy_amount', 'sell_amount',
+                       'amount', 'total_amount', 'net_buy_ratio', 'amount_ratio',
+                       'turnover', 'circ_mv', 'after_1day', 'after_2day', 'after_5day', 'after_10day']:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            # 处理上榜日期字段，如果是时间戳格式则转为日期字符串
+            if 'list_date' in df.columns:
+                try:
+                    if isinstance(df['list_date'].iloc[0], (int, float)):
+                        # 将时间戳转换为日期字符串
+                        df['list_date'] = pd.to_datetime(df['list_date'], unit='ms').dt.strftime('%Y-%m-%d')
+                except Exception as e:
+                    log.warning(f"处理上榜日期字段失败: {str(e)}")
             
             # 去掉code列前缀的数字和点，例如1.600001转为600001
             if 'code' in df.columns and len(df) > 0 and '.' in str(df['code'].iloc[0]):
@@ -122,13 +150,15 @@ def fetch_top_inst(date=None):
                 '卖出金额占成交额比': 'sell_amount_ratio'
             }
             
-            # 确保所有需要的列都存在
+            # 确保所有需要的列都存在，避免在迭代过程中修改字典
+            safe_columns_map = {}
             for en, cn in columns_map.items():
-                if en not in df.columns:
+                if en in df.columns:
+                    safe_columns_map[en] = cn
+                else:
                     log.warning(f"龙虎榜机构数据中缺少列: {en}")
-                    columns_map.pop(en)
             
-            df = df.rename(columns=columns_map)
+            df = df.rename(columns=safe_columns_map)
             
             # 添加日期列
             df['date'] = date
@@ -175,13 +205,15 @@ def fetch_restricted_release(date=None):
                 '解禁股东': 'release_shareholder'
             }
             
-            # 确保所有需要的列都存在
+            # 确保所有需要的列都存在，避免在迭代过程中修改字典
+            safe_columns_map = {}
             for en, cn in columns_map.items():
-                if en not in df.columns:
+                if en in df.columns:
+                    safe_columns_map[en] = cn
+                else:
                     log.warning(f"解禁股数据中缺少列: {en}")
-                    columns_map.pop(en)
             
-            df = df.rename(columns=columns_map)
+            df = df.rename(columns=safe_columns_map)
             
             # 处理数据格式
             for col in ['release_count', 'release_ratio', 'price', 'release_market_value']:
@@ -232,13 +264,15 @@ def fetch_moneyflow_hsgt(date=None):
                 '南向资金': 'south_money', '北向资金': 'north_money'
             }
             
-            # 确保所有需要的列都存在
+            # 确保所有需要的列都存在，避免在迭代过程中修改字典
+            safe_columns_map = {}
             for en, cn in columns_map.items():
-                if en not in df.columns:
+                if en in df.columns:
+                    safe_columns_map[en] = cn
+                else:
                     log.warning(f"沪深港通资金流向数据中缺少列: {en}")
-                    columns_map.pop(en)
             
-            df = df.rename(columns=columns_map)
+            df = df.rename(columns=safe_columns_map)
             
             # 处理数据格式
             for col in ['net_amount', 'hk_sh', 'hk_sz', 'sh_hk', 'sz_hk', 'south_money', 'north_money']:
@@ -289,13 +323,15 @@ def fetch_moneyflow_stock(date=None):
                 '今日小单净流入-净占比': 'small_net_inflow_ratio'
             }
             
-            # 确保所有需要的列都存在
+            # 确保所有需要的列都存在，避免在迭代过程中修改字典
+            safe_columns_map = {}
             for en, cn in columns_map.items():
-                if en not in df.columns:
+                if en in df.columns:
+                    safe_columns_map[en] = cn
+                else:
                     log.warning(f"个股资金流向数据中缺少列: {en}")
-                    columns_map.pop(en)
             
-            df = df.rename(columns=columns_map)
+            df = df.rename(columns=safe_columns_map)
             
             # 添加日期列
             df['date'] = date
@@ -352,13 +388,15 @@ def fetch_moneyflow_sector(date=None):
                 '小单净流入-净占比': 'small_net_inflow_ratio'
             }
             
-            # 确保所有需要的列都存在
+            # 确保所有需要的列都存在，避免在迭代过程中修改字典
+            safe_columns_map = {}
             for en, cn in columns_map.items():
-                if en not in df.columns:
+                if en in df.columns:
+                    safe_columns_map[en] = cn
+                else:
                     log.warning(f"板块资金流向数据中缺少列: {en}")
-                    columns_map.pop(en)
             
-            df = df.rename(columns=columns_map)
+            df = df.rename(columns=safe_columns_map)
             
             # 添加日期列
             df['date'] = date

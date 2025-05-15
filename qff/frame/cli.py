@@ -329,6 +329,24 @@ class SaveCommand(Command):
         ⌨️命令格式：qff save init_name         : 初始化股票历史更名数据                                                        \n\
         ⌨️命令格式：qff save save_delist       : 保存退市股票的日数据和分钟数据                                                 \n\
         ----------------------------------------------------------------------------------------------------------------------\n\
+        ⌨️命令格式：qff save hot_info          : 一键保存热点信息（涨停、跌停、大宗交易、融资融券明细）                              \n\
+        ⌨️命令格式：qff save limit_up          : 保存涨停信息数据                                                               \n\
+        ⌨️命令格式：qff save limit_down        : 保存跌停信息数据                                                               \n\
+        ----------------------------------------------------------------------------------------------------------------------\n\
+        ⌨️命令格式：qff save block_info        : 一键保存板块信息（概念、行业板块的列表、成分股、日线数据）                          \n\
+        ⌨️命令格式：qff save concept_list      : 保存概念板块列表数据                                                           \n\
+        ⌨️命令格式：qff save concept_stocks    : 保存概念板块成分股数据                                                         \n\
+        ⌨️命令格式：qff save concept_daily     : 保存概念板块日线数据                                                           \n\
+        ⌨️命令格式：qff save industry_list     : 保存行业板块列表数据                                                           \n\
+        ⌨️命令格式：qff save industry_stocks   : 保存行业板块成分股数据                                                         \n\
+        ⌨️命令格式：qff save industry_daily    : 保存行业板块日线数据                                                           \n\
+        ----------------------------------------------------------------------------------------------------------------------\n\
+        ⌨️命令格式：qff save special_info      : 一键保存特殊信息（龙虎榜、解禁股、资金流向等）                                    \n\
+        ⌨️命令格式：qff save top_list          : 保存龙虎榜信息数据                                                             \n\
+        ⌨️命令格式：qff save top_inst          : 保存龙虎榜机构席位数据                                                         \n\
+        ⌨️命令格式：qff save moneyflow_stock   : 保存个股资金流向数据                                                           \n\
+        ⌨️命令格式：qff save moneyflow_sector  : 保存板块资金流向数据                                                           \n\
+        ----------------------------------------------------------------------------------------------------------------------\n\
 
     """
     usage = f"\nqff save <subcommand>"
@@ -347,7 +365,9 @@ class SaveCommand(Command):
                 args.subcommand not in ['all', 'day', 'min', 'stock_list', 'stock_day', 'index_day', 'etf_day',
                                         'stock_min', 'index_min', 'etf_min', 'stock_xdxr', 'stock_block', 'report',
                                         'valuation', 'mtss', 'index_stock', 'industry_stock', 'init_info', 'init_name',
-                                        'save_delist']:
+                                        'save_delist', 'hot_info', 'limit_up', 'limit_down', 'block_info', 'concept_list',
+                                        'concept_stocks', 'concept_daily', 'industry_list', 'industry_stocks', 'industry_daily',
+                                        'special_info', 'top_list', 'top_inst', 'moneyflow_stock', 'moneyflow_sector']:
 
             self.parser.print_help()
             return

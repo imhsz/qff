@@ -45,11 +45,19 @@ def get_config(section, option, default_value=None):
     try:
         config = configparser.ConfigParser()
         config.read(CONFIGFILE_PATH)
+        if not config.has_section(section) or not config.has_option(section, option):
+            print(f'config.ini文件中无该配置项 [{section}] {option}，使用默认值: {default_value}')
+            if default_value is not None:
+                set_config(section, option, default_value)
+            return default_value
         return config.get(section, option)
     except Exception as e:
-        print('config.ini文件中无该配置项,使用default_value!：\n {}'.format(e))
-        if default_value:
-            set_config(section, option, default_value)
+        print(f'读取配置文件出错: {e}, 使用默认值: {default_value}')
+        if default_value is not None:
+            try:
+                set_config(section, option, default_value)
+            except:
+                pass  # 如果设置失败，忽略错误
         return default_value
 
 

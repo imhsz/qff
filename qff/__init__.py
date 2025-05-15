@@ -161,3 +161,12 @@ from qff.helper.formula import (
 from qff.helper.common import filter_st_stock, filter_paused_stock, filter_20pct_stock, select_zt_stock, filter_bj_stock
 from qff.price.cache import get_current_data, SecurityUnitData
 from qff.frame.evaluation import strategy_eval
+
+# 在所有模块导入完成后，初始化缓存
+from qff.tools.cache import init_cache_data
+
+# 初始化缓存数据
+try:
+    init_cache_data()
+except Exception as e:
+    log.warning(f"初始化缓存数据失败: {e}，可能影响部分功能使用")

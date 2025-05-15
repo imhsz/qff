@@ -913,3 +913,14 @@ def int_to_date(d: int):
     else:
         s = str(d)
         return s[:4]+'-'+s[4:6]+'-'+s[6:]
+
+
+# 添加 now_time 函数
+def now_time(format_str="%Y-%m-%d %H:%M:%S"):
+    """
+    获取当前时间字符串
+    
+    :param format_str: 时间格式化字符串，默认为 "%Y-%m-%d %H:%M:%S"
+    :return: 当前时间字符串
+    """
+    return datetime.now().strftime(format_str)

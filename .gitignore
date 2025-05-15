@@ -11,3 +11,4 @@
 /example/strategy/lbfq.py
 /migrate/
 *.pyc
+charts/*.png

@@ -48,8 +48,27 @@ def fetch_limit_up(date=None):
         if date is None:
             date = get_real_trade_date(datetime.date.today().strftime('%Y-%m-%d'))
         
-        # 使用akshare获取涨停数据
-        df = ak.stock_em_zt_pool(date=date)
+        # 尝试使用不同的API获取涨停数据
+        try:
+            # 尝试新API: stock_zt_pool_em
+            df = ak.stock_zt_pool_em(date=date)
+            log.info(f"使用 stock_zt_pool_em API 获取涨停数据")
+        except Exception as e1:
+            log.warning(f"使用 stock_zt_pool_em API 失败: {str(e1)}")
+            try:
+                # 尝试另一个可能的API: stock_limit_up_em
+                df = ak.stock_limit_up_em(date=date)
+                log.info(f"使用 stock_limit_up_em API 获取涨停数据")
+            except Exception as e2:
+                log.warning(f"使用 stock_limit_up_em API 失败: {str(e2)}")
+                # 尝试其他可能的API名称
+                try:
+                    # 尝试原始API名称
+                    df = ak.stock_em_zt_pool(date=date)
+                    log.info(f"使用 stock_em_zt_pool API 获取涨停数据")
+                except Exception as e3:
+                    log.error(f"所有尝试获取涨停数据的API均失败")
+                    return None
         
         if df is not None and len(df) > 0:
             # 重命名列
@@ -60,11 +79,16 @@ def fetch_limit_up(date=None):
                 '换手率': 'turnover', '封单资金': 'seal_money',
                 '首次封板时间': 'first_limit_time', '最后封板时间': 'last_limit_time',
                 '炸板次数': 'break_limit_times', '涨停统计': 'limit_times',
-                '连板数': 'limit_days'
+                '连板数': 'limit_days',
+                # 下面是新API可能的列名
+                '涨停价': 'limit_price', '涨停原因': 'reason',
+                '涨停类型': 'limit_type', '封单金额': 'seal_money',
+                '当日成交额': 'daily_amount', '流通股本': 'float_shares',
+                '流通市值': 'circ_mv'
             }
             
             # 确保所有需要的列都存在
-            for en, cn in columns_map.items():
+            for en, cn in list(columns_map.items()):
                 if en not in df.columns:
                     log.warning(f"涨停数据中缺少列: {en}")
                     columns_map.pop(en)
@@ -103,8 +127,33 @@ def fetch_limit_down(date=None):
         if date is None:
             date = get_real_trade_date(datetime.date.today().strftime('%Y-%m-%d'))
         
-        # 使用akshare获取跌停数据
-        df = ak.stock_em_dt_pool(date=date)
+        # 尝试使用不同的API获取跌停数据
+        try:
+            # 获取所有涨跌停数据，然后通过涨跌幅筛选跌停股票
+            df = ak.stock_zt_pool_em(date=date)
+            log.info(f"获取涨跌停数据，通过涨跌幅筛选跌停股票")
+            
+            # 如果数据包含涨跌幅列，筛选出跌停股票（一般跌幅 <= -9.5%）
+            if df is not None and len(df) > 0 and '涨跌幅' in df.columns:
+                df = df[df['涨跌幅'] <= -9.5]
+                log.info(f"通过涨跌幅筛选出跌停股票，共 {len(df)} 条记录")
+            else:
+                log.warning(f"数据中没有涨跌幅列或数据为空，无法筛选跌停股票")
+                
+        except Exception as e:
+            log.warning(f"使用 stock_zt_pool_em API 获取涨跌停数据失败: {str(e)}")
+            try:
+                # 尝试stock_em_zt_pool的跌停类型
+                df = ak.stock_em_zt_pool(date=date)
+                # 如果数据包含涨跌幅列，筛选出跌停股票（一般跌幅 <= -9.5%）
+                if '涨跌幅' in df.columns:
+                    df = df[df['涨跌幅'] <= -9.5]
+                    log.info(f"使用 stock_em_zt_pool API 筛选跌停股票，共 {len(df)} 条记录")
+                else:
+                    log.warning(f"stock_em_zt_pool返回的数据中没有涨跌幅列，无法筛选跌停股票")
+            except Exception as e3:
+                log.error(f"所有尝试获取跌停数据的API均失败: {str(e3)}")
+                return None
         
         if df is not None and len(df) > 0:
             # 重命名列
@@ -113,11 +162,16 @@ def fetch_limit_down(date=None):
                 '最新价': 'close', '涨跌幅': 'pct_chg', '成交额': 'amount',
                 '流通市值': 'circ_mv', '总市值': 'total_mv',
                 '换手率': 'turnover', '封单资金': 'seal_money',
-                '跌停统计': 'limit_times'
+                '跌停统计': 'limit_times',
+                # 下面是新API可能的列名
+                '跌停价': 'limit_price', '跌停原因': 'reason',
+                '跌停类型': 'limit_type', '封单金额': 'seal_money',
+                '当日成交额': 'daily_amount', '流通股本': 'float_shares',
+                '流通市值': 'circ_mv'
             }
             
             # 确保所有需要的列都存在
-            for en, cn in columns_map.items():
+            for en, cn in list(columns_map.items()):
                 if en not in df.columns:
                     log.warning(f"跌停数据中缺少列: {en}")
                     columns_map.pop(en)
@@ -159,26 +213,40 @@ def fetch_block_trade(date=None):
         # 日期格式转换，从YYYY-MM-DD转为YYYYMMDD
         date_str = date.replace('-', '')
         
-        # 使用akshare获取大宗交易数据
-        df = ak.stock_dzjy_mrtj(start_date=date_str, end_date=date_str)
+        # 尝试不同的API获取大宗交易数据
+        try:
+            # 尝试新API
+            df = ak.stock_dzjy_mrtj(start_date=date_str, end_date=date_str)
+            log.info(f"使用 stock_dzjy_mrtj API 获取大宗交易数据")
+        except Exception as e:
+            log.warning(f"使用 stock_dzjy_mrtj API 失败: {str(e)}")
+            try:
+                # 尝试另一个可能的API
+                df = ak.stock_block_trade_em(date=date)
+                log.info(f"使用 stock_block_trade_em API 获取大宗交易数据")
+            except Exception as e2:
+                log.error(f"所有尝试获取大宗交易数据的API均失败")
+                return None
         
         if df is not None and len(df) > 0:
-            # 重命名列
+            # 重命名列 - 保留原有的columns_map，但新API可能有不同的列名
             columns_map = {
                 '证券代码': 'code', '证券简称': 'name',
-                '成交价格(元)': 'price', '成交量(万股)': 'volume',
-                '成交金额(万元)': 'amount', '买方营业部': 'buyer',
-                '卖方营业部': 'seller', '证券类型': 'type',
+                '成交价格': 'price', '成交价格(元)': 'price',
+                '成交量': 'volume', '成交量(万股)': 'volume',
+                '成交金额': 'amount', '成交金额(万元)': 'amount',
+                '买方营业部': 'buyer', '卖方营业部': 'seller',
+                '证券类型': 'type', '涨跌幅': 'pct_chg',
                 '涨跌幅(%)': 'pct_chg', '收盘价': 'close'
             }
             
-            # 确保所有需要的列都存在
+            # 确保所有需要的列都存在，但不要在迭代过程中修改字典
+            safe_columns_map = {}
             for en, cn in columns_map.items():
-                if en not in df.columns:
-                    log.warning(f"大宗交易数据中缺少列: {en}")
-                    columns_map.pop(en)
+                if en in df.columns:
+                    safe_columns_map[en] = cn
             
-            df = df.rename(columns=columns_map)
+            df = df.rename(columns=safe_columns_map)
             
             # 添加日期列
             df['date'] = date
@@ -208,11 +276,106 @@ def fetch_margin_detail(date=None):
         if date is None:
             date = get_real_trade_date(datetime.date.today().strftime('%Y-%m-%d'))
         
-        # 使用akshare获取融资融券明细数据
-        df = ak.stock_margin_detail_sse(date=date)
+        # 日期格式转换，某些API可能需要不同的格式
+        date_no_dash = date.replace('-', '')
+        
+        # 尝试所有可能的API获取融资融券明细数据
+        df = None
+        api_tried = []
+        
+        # 尝试 stock_margin_detail_em API
+        try:
+            if hasattr(ak, 'stock_margin_detail_em'):
+                df = ak.stock_margin_detail_em(date=date)
+                log.info(f"使用 stock_margin_detail_em API 获取融资融券明细数据")
+                api_tried.append("stock_margin_detail_em")
+            else:
+                log.warning(f"akshare 模块没有 stock_margin_detail_em 属性")
+        except Exception as e:
+            log.warning(f"使用 stock_margin_detail_em API 失败: {str(e)}")
+        
+        # 尝试 stock_margin_detail_sse API
+        if df is None or len(df) == 0:
+            try:
+                if hasattr(ak, 'stock_margin_detail_sse'):
+                    df = ak.stock_margin_detail_sse(date=date)
+                    log.info(f"使用 stock_margin_detail_sse API 获取融资融券明细数据")
+                    api_tried.append("stock_margin_detail_sse")
+                else:
+                    log.warning(f"akshare 模块没有 stock_margin_detail_sse 属性")
+            except Exception as e:
+                log.warning(f"使用 stock_margin_detail_sse API 失败: {str(e)}")
+        
+        # 尝试 stock_margin_sse API
+        if df is None or len(df) == 0:
+            try:
+                if hasattr(ak, 'stock_margin_sse'):
+                    df = ak.stock_margin_sse(start_date=date, end_date=date)
+                    log.info(f"使用 stock_margin_sse API 获取融资融券明细数据")
+                    api_tried.append("stock_margin_sse")
+                else:
+                    log.warning(f"akshare 模块没有 stock_margin_sse 属性")
+            except Exception as e:
+                log.warning(f"使用 stock_margin_sse API 失败: {str(e)}")
+        
+        # 尝试 stock_margin_szse API
+        if df is None or len(df) == 0:
+            try:
+                if hasattr(ak, 'stock_margin_szse'):
+                    df = ak.stock_margin_szse(start_date=date_no_dash, end_date=date_no_dash)
+                    log.info(f"使用 stock_margin_szse API 获取融资融券明细数据")
+                    api_tried.append("stock_margin_szse")
+                else:
+                    log.warning(f"akshare 模块没有 stock_margin_szse 属性")
+            except Exception as e:
+                log.warning(f"使用 stock_margin_szse API 失败: {str(e)}")
+        
+        # 尝试任何其他可能相关的API
+        if df is None or len(df) == 0:
+            # 获取akshare模块中所有包含"margin"的函数，作为可能的候选API
+            margin_api_candidates = [attr for attr in dir(ak) 
+                                  if attr.startswith('stock_margin') and callable(getattr(ak, attr))]
+            log.info(f"找到以下潜在的融资融券相关API: {margin_api_candidates}")
+            
+            # 尝试这些候选API
+            for api_name in margin_api_candidates:
+                if api_name in api_tried:
+                    continue
+                    
+                try:
+                    api_func = getattr(ak, api_name)
+                    # 尝试不同的参数组合
+                    param_combinations = [
+                        {'date': date},
+                        {'start_date': date, 'end_date': date},
+                        {'start_date': date_no_dash, 'end_date': date_no_dash},
+                        {'trade_date': date}
+                    ]
+                    
+                    for params in param_combinations:
+                        try:
+                            result = api_func(**params)
+                            if isinstance(result, pd.DataFrame) and len(result) > 0:
+                                df = result
+                                log.info(f"使用 {api_name} API 成功获取融资融券数据")
+                                api_tried.append(api_name)
+                                break
+                        except Exception:
+                            continue
+                    
+                    if df is not None and len(df) > 0:
+                        break
+                        
+                except Exception as e:
+                    log.warning(f"尝试使用 {api_name} API 时出错: {str(e)}")
+        
+        if api_tried:
+            log.info(f"尝试了以下API获取融资融券数据: {', '.join(api_tried)}")
+        else:
+            log.error(f"没有可用的API获取融资融券数据")
         
         if df is not None and len(df) > 0:
-            # 重命名列
+            # 重命名列 - 列名可能因为API变化而不同
             columns_map = {
                 '余额': 'balance', '余量': 'volume',
                 '买入金额': 'buy_amount', '买入量': 'buy_volume',
@@ -224,26 +387,41 @@ def fetch_margin_detail(date=None):
                 '融资余额': 'finance_balance', '融资余量': 'finance_volume',
                 '融券偿还量': 'short_repay_volume', '融券偿还额': 'short_repay_amount',
                 '融券卖出量': 'short_sell_volume', '融券卖出额': 'short_sell_amount',
-                '标的证券代码': 'code', '标的证券简称': 'name'
+                '标的证券代码': 'code', '证券代码': 'code', '股票代码': 'code', 
+                'stock_code': 'code', '代码': 'code',
+                '标的证券简称': 'name', '证券简称': 'name', '股票简称': 'name', 
+                'stock_name': 'name', '简称': 'name', '名称': 'name',
+                '日期': 'date', 'date': 'date', '交易日期': 'date', '统计日期': 'date'
             }
             
             # 确保所有需要的列都存在
+            safe_columns_map = {}
             for en, cn in columns_map.items():
-                if en not in df.columns:
-                    log.warning(f"融资融券明细数据中缺少列: {en}")
-                    columns_map.pop(en)
+                if en in df.columns:
+                    safe_columns_map[en] = cn
             
-            df = df.rename(columns=columns_map)
+            if safe_columns_map:
+                df = df.rename(columns=safe_columns_map)
             
-            # 添加日期列
-            df['date'] = date
+            # 如果date不在已重命名的列中，添加日期列
+            if 'date' not in df.columns:
+                df['date'] = date
             
             # 处理数据格式
+            # 首先确保code列格式正确
+            if 'code' in df.columns:
+                df['code'] = df['code'].astype(str).apply(lambda x: x.split('.')[-1])
+            
+            # 处理数值列
             numeric_cols = [col for col in df.columns if col not in ['code', 'name', 'date']]
             for col in numeric_cols:
                 if col in df.columns:
+                    # 处理可能的字符串格式化问题，如千分位分隔符或百分比
+                    if df[col].dtype == object:
+                        df[col] = df[col].astype(str).str.replace(',', '').str.replace('%', '')
                     df[col] = pd.to_numeric(df[col], errors='coerce')
             
+            log.info(f"成功获取到 {len(df)} 条融资融券明细数据")
             return df
         else:
             log.warning(f"未获取到 {date} 的融资融券明细数据")

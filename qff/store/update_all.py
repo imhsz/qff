@@ -62,7 +62,6 @@ def update_all(date=None):
     # 初始化股票列表
     try:
         init_stock_list()
-        init_block_list()
     except Exception as e:
         print(f"initialize stock list error: {e}")
 
@@ -260,6 +259,71 @@ def qff_save(*args):
         init_stock_name()
     elif args[0] == 'save_delist':
         init_delist_date()
+    
+    # 新增热点信息保存命令
+    elif args[0] == 'hot_info':
+        # 一键保存所有热点信息
+        save_limit_up()
+        save_limit_down()
+        save_block_trade()
+        save_margin_detail()
+        
+    elif args[0] == 'limit_up':
+        save_limit_up()
+        
+    elif args[0] == 'limit_down':
+        save_limit_down()
+        
+    # 新增板块信息保存命令
+    elif args[0] == 'block_info':
+        # 一键保存所有板块信息
+        save_concept_list()
+        save_concept_stocks()
+        save_concept_daily()
+        save_industry_list()
+        save_industry_stocks()
+        save_industry_daily()
+        
+    elif args[0] == 'concept_list':
+        save_concept_list()
+        
+    elif args[0] == 'concept_stocks':
+        save_concept_stocks()
+        
+    elif args[0] == 'concept_daily':
+        save_concept_daily()
+        
+    elif args[0] == 'industry_list':
+        save_industry_list()
+        
+    elif args[0] == 'industry_stocks':
+        save_industry_stocks()
+        
+    elif args[0] == 'industry_daily':
+        save_industry_daily()
+        
+    # 新增特殊信息保存命令
+    elif args[0] == 'special_info':
+        # 一键保存所有特殊信息
+        save_top_list()
+        save_top_inst()
+        save_restricted_release()
+        save_moneyflow_hsgt()
+        save_moneyflow_stock()
+        save_moneyflow_sector()
+        
+    elif args[0] == 'top_list':
+        save_top_list()
+        
+    elif args[0] == 'top_inst':
+        save_top_inst()
+        
+    elif args[0] == 'moneyflow_stock':
+        save_moneyflow_stock()
+        
+    elif args[0] == 'moneyflow_sector':
+        save_moneyflow_sector()
+        
     else:
         print("命令格式不合法！")
 
