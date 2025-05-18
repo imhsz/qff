@@ -366,7 +366,6 @@ def save_security_day(market='stock', security=None, parallel=True, batch_size=1
             stock_batches = [stock_list[i:i+1000] for i in range(0, len(stock_list), 1000)]
             total_checked = 0
             total_latest = 0
-            today_codes = []  # 专门记录需要更新今日盘中数据的股票
             
             for batch in stock_batches:
                 # 使用批量查询优化性能
@@ -381,25 +380,17 @@ def save_security_day(market='stock', security=None, parallel=True, batch_size=1
                     code = record['code']
                     if code not in codes_processed:
                         codes_processed.add(code)
-                        last_datetime = record['date']
-                        last_date = last_datetime[:10]  # 提取日期部分
+                        last_date = record['date']  # 直接使用date字段
                         
                         # 根据不同情况判断是否需要更新
                         if is_trade_day(end_date) and pd.Timestamp.now().hour < 15:
                             # 交易日盘中 - 检查是否需要获取实时数据
                             if last_date == end_date:
-                                # 已有今日数据，检查是否为最近30分钟
-                                last_time = pd.Timestamp(last_datetime)
-                                if (pd.Timestamp.now() - last_time).total_seconds() > 1800:  # 30分钟
-                                    # 数据不是最新的，需要更新今日盘中数据
-                                    today_codes.append(code)
-                                    code_start_dates[code] = end_date
-                                else:
-                                    # 数据很新，不需要更新
-                                    total_latest += 1
+                                # 已有今日数据，无需更新
+                                total_latest += 1
                             elif last_date >= latest_trade_day:
                                 # 有昨日数据，需要获取今日盘中数据
-                                today_codes.append(code)
+                                need_update_codes.append(code)
                                 code_start_dates[code] = end_date
                             else:
                                 # 数据较旧，需要常规更新
@@ -427,13 +418,9 @@ def save_security_day(market='stock', security=None, parallel=True, batch_size=1
                 print(f"已检查 {total_checked}/{len(stock_list)} 只股票，已是最新的有 {total_latest} 只")
             
             # 合并需要常规更新和需要获取盘中数据的股票
-            if today_codes:
-                print(f"有 {len(today_codes)} 只股票需要更新今日盘中数据")
-                need_update_codes.extend(today_codes)
-            
             total_stocks = len(need_update_codes)
             if total_stocks == 0:
-                print(f"所有 {len(stock_list)} 只股票的 {freq} 数据均为最新（截至 {latest_trade_day}），无需更新")
+                print(f"所有 {len(stock_list)} 只股票数据均为最新（截至 {latest_trade_day}），无需更新")
                 return
                 
             print(f"筛选出 {total_stocks}/{len(stock_list)} 只需要更新的股票（最新标准: {latest_trade_day}）")
@@ -826,7 +813,6 @@ def save_security_min(market='stock', freq='1min', security=None, parallel=True,
             stock_batches = [stock_list[i:i+1000] for i in range(0, len(stock_list), 1000)]
             total_checked = 0
             total_latest = 0
-            today_codes = []  # 专门记录需要更新今日盘中数据的股票
             
             for batch in stock_batches:
                 # 使用批量查询优化性能
@@ -841,25 +827,17 @@ def save_security_min(market='stock', freq='1min', security=None, parallel=True,
                     code = record['code']
                     if code not in codes_processed:
                         codes_processed.add(code)
-                        last_datetime = record['datetime']
-                        last_date = last_datetime[:10]  # 提取日期部分
+                        last_date = record['date']  # 直接使用date字段
                         
                         # 根据不同情况判断是否需要更新
                         if is_trade_day(end_date) and pd.Timestamp.now().hour < 15:
                             # 交易日盘中 - 检查是否需要获取实时数据
                             if last_date == end_date:
-                                # 已有今日数据，检查是否为最近30分钟
-                                last_time = pd.Timestamp(last_datetime)
-                                if (pd.Timestamp.now() - last_time).total_seconds() > 1800:  # 30分钟
-                                    # 数据不是最新的，需要更新今日盘中数据
-                                    today_codes.append(code)
-                                    code_start_dates[code] = end_date
-                                else:
-                                    # 数据很新，不需要更新
-                                    total_latest += 1
+                                # 已有今日数据，无需更新
+                                total_latest += 1
                             elif last_date >= latest_trade_day:
                                 # 有昨日数据，需要获取今日盘中数据
-                                today_codes.append(code)
+                                need_update_codes.append(code)
                                 code_start_dates[code] = end_date
                             else:
                                 # 数据较旧，需要常规更新
@@ -887,10 +865,6 @@ def save_security_min(market='stock', freq='1min', security=None, parallel=True,
                 print(f"已检查 {total_checked}/{len(stock_list)} 只股票，已是最新的有 {total_latest} 只")
             
             # 合并需要常规更新和需要获取盘中数据的股票
-            if today_codes:
-                print(f"有 {len(today_codes)} 只股票需要更新今日盘中数据")
-                need_update_codes.extend(today_codes)
-            
             total_stocks = len(need_update_codes)
             if total_stocks == 0:
                 print(f"所有 {len(stock_list)} 只股票的 {freq} 数据均为最新（截至 {latest_trade_day}），无需更新")
