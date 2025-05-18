@@ -33,7 +33,7 @@ import time
 from typing import Optional
 from qff.price.fetch import fetch_price, fetch_price_parallel, fetch_stock_xdxr, fetch_stock_block
 from qff.price.query import get_all_securities
-from qff.tools.date import get_real_trade_date, get_next_trade_day, util_get_date_gap, get_trade_days, get_pre_trade_day
+from qff.tools.date import get_real_trade_date, get_next_trade_day, util_get_date_gap, get_trade_days, get_pre_trade_day, is_trade_day
 from qff.tools.mongo import DATABASE
 from qff.tools.utils import util_to_json_from_pandas, util_code_tolist
 from pymongo.errors import PyMongoError
