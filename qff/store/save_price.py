@@ -349,7 +349,8 @@ def save_security_day(market='stock', security=None, parallel=True, batch_size=1
             latest_trade_day = get_real_trade_date(pd.Timestamp(end_date) - pd.Timedelta(days=1))
             print(f"最近交易日: {latest_trade_day}")
             
-            # 确定最新标准
+            # 对于今日为交易日且已收盘的情况，直接使用今日日期
+            today_data_needed = False  # 默认不需要获取今日盘中数据
             if is_trade_day(end_date):
                 now = pd.Timestamp.now()
                 # 交易日已收盘，使用今日作为标准
@@ -808,7 +809,8 @@ def save_security_min(market='stock', freq='1min', security=None, parallel=True,
             latest_trade_day = get_real_trade_date(pd.Timestamp(end_date) - pd.Timedelta(days=1))
             print(f"最近交易日: {latest_trade_day}")
             
-            # 确定最新标准
+            # 对于今日为交易日且已收盘的情况，直接使用今日日期
+            today_data_needed = False  # 默认不需要获取今日盘中数据
             if is_trade_day(end_date):
                 now = pd.Timestamp.now()
                 # 交易日已收盘，使用今日作为标准
