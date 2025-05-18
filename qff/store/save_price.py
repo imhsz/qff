@@ -371,9 +371,9 @@ def save_security_day(market='stock', security=None, parallel=True, batch_size=1
             for batch in stock_batches:
                 # 使用批量查询优化性能
                 query_result = list(coll.find(
-                    {'code': {'$in': batch}, 'type': freq},
-                    {'_id': 0, 'code': 1, 'datetime': 1}
-                ).sort([('code', 1), ('datetime', -1)]))
+                    {'code': {'$in': batch}},
+                    {'_id': 0, 'code': 1, 'date': 1, 'close': 1}
+                ).sort([('code', 1), ('date', -1)]))
                 
                 # 处理查询结果，获取每只股票的最新记录
                 codes_processed = set()
@@ -381,7 +381,7 @@ def save_security_day(market='stock', security=None, parallel=True, batch_size=1
                     code = record['code']
                     if code not in codes_processed:
                         codes_processed.add(code)
-                        last_datetime = record['datetime']
+                        last_datetime = record['date']
                         last_date = last_datetime[:10]  # 提取日期部分
                         
                         # 根据不同情况判断是否需要更新
