@@ -73,32 +73,37 @@ def update_all(date=None):
 
     # 更新行情数据
     try:
-        save_stock_day()
-        save_stock_block()
+        print("开始更新股票日线数据...")
+        # 使用更小的批次大小并增加并行度，优化性能和内存占用
+        # 批次大小从150降为100，并发线程从8增加到12，提高处理效率
+        save_security_day(market='stock', batch_size=100, max_workers=12)
+        print("股票日线数据更新完成")
+        # save_security_block()  # 如有定义则保留，否则可注释
     except Exception as e:
         print(f"updating stock price data error: {e}")
 
     # 更新最新财务数据
     try:
-        save_stock_report()
+        save_report()
     except Exception as e:
         print(f"updating stock report data error: {e}")
 
     # 更新估值数据
     try:
-        save_stock_valuation()
+        save_valuation_data()
     except Exception as e:
         print(f"updating stock valuation data error: {e}")
 
     # 更新融资融券数据
     try:
-        save_mtss()
+        save_mtss_data()
     except Exception as e:
         print(f"updating mtss data error: {e}")
 
     # 更新分钟线数据
     try:
-        save_stock_min()
+        # 优化分钟线数据处理，使用较小批次大小和较大并发数
+        save_security_min(market='stock', batch_size=100, max_workers=10)
     except Exception as e:
         print(f"updating stock min data error: {e}")
 

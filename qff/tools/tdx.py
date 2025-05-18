@@ -35,7 +35,11 @@ import pandas as pd
 import numpy as np
 import socket
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import random
 
+# 全局服务器缓存，避免反复查找
+_CACHED_BEST_IPS = None
+_CACHE_TIME = 0  # 缓存时间戳
 
 def select_market_code(code, market='stock'):
     """
@@ -168,7 +172,12 @@ def get_best_ip():
 
 
 stock_ip_list = [
-    # added 20190222 from tdx
+    # 2023年更新的高可用服务器
+    {"ip": "119.147.212.81", "port": 7709, "name": "深圳新增主站1"},
+    {"ip": "47.107.75.159", "port": 7709, "name": "深圳新增主站2"},
+    {"ip": "101.132.35.193", "port": 7709, "name": "上海新增主站1"},
+    {"ip": "45.192.129.230", "port": 7709, "name": "上海新增主站2"},
+    # 主要通达信行情服务器
     {"ip": "106.120.74.86", "port": 7711, "name": "北京行情主站1"},
     {"ip": "113.105.73.88", "port": 7709, "name": "深圳行情主站"},
     {"ip": "113.105.73.88", "port": 7711, "name": "深圳行情主站"},
@@ -178,7 +187,10 @@ stock_ip_list = [
     {"ip": "119.147.171.206", "port": 80, "name": "广州行情主站"},
     {"ip": "218.108.50.178", "port": 7711, "name": "杭州行情主站"},
     {"ip": "221.194.181.176", "port": 7711, "name": "北京行情主站2"},
-    # origin
+    # 其他备用服务器
+    {"ip": "47.93.52.95", "port": 7709, "name": "阿里云主站"},
+    {"ip": "202.108.253.131", "port": 7709, "name": "华泰主站"},
+    # 原有服务器列表
     {"ip": "106.120.74.86", "port": 7709},  # 北京
     {"ip": "112.95.140.74", "port": 7709},
     {"ip": "112.95.140.92", "port": 7709},
@@ -242,8 +254,20 @@ def select_best_ip_list(n=5, timeout=1.0, ip_list=None):
     :param ip_list: 指定要测试的IP列表，默认为None，使用内置的stock_ip_list
     :return: list of tuple(ip, port)，最佳服务器IP和端口列表
     """
+    global _CACHED_BEST_IPS, _CACHE_TIME
+    
+    # 检查缓存是否有效（30分钟内的缓存视为有效）
+    cache_valid = _CACHED_BEST_IPS is not None and len(_CACHED_BEST_IPS) >= n and time.time() - _CACHE_TIME < 1800
+    
+    if cache_valid:
+        log.info(f"使用缓存的 {len(_CACHED_BEST_IPS)} 个服务器 (剩余有效期: {int(1800-(time.time()-_CACHE_TIME))}秒)")
+        return _CACHED_BEST_IPS[:n]
+    
     if ip_list is None:
         ip_list = stock_ip_list
+    
+    # 确保至少返回3个服务器，增加容错性
+    n = max(n, 3)
     
     log.info(f"正在筛选最佳的 {n} 个通达信服务器...")
     
@@ -254,11 +278,56 @@ def select_best_ip_list(n=5, timeout=1.0, ip_list=None):
             default_ips = json.loads(default_ips)
             if isinstance(default_ips, list) and len(default_ips) >= n:
                 ip_ports = [(ip_port['ip'], ip_port['port']) for ip_port in default_ips[:n]]
+                # 快速测试这些保存的服务器
+                for ip, port in ip_ports[:2]:  # 只测试前两个
+                    try:
+                        api = TdxHq_API()
+                        with api.connect(ip, port, time_out=2):  # 减少超时时间以加快测试
+                            if api.get_security_count(0) > 0:
+                                log.info(f"从配置中获取到有效服务器 {ip}:{port}")
+                                break
+                    except:
+                        continue
+                else:
+                    # 如果所有保存的服务器都连不上，重新测试
+                    log.warning("配置中的服务器均无法连接，重新测试")
+                    raise Exception("Saved servers not available")
+                    
                 log.info(f"从配置中获取到 {len(ip_ports)} 个服务器")
+                # 更新缓存
+                _CACHED_BEST_IPS = ip_ports
+                _CACHE_TIME = time.time()
                 return ip_ports
-        except (json.JSONDecodeError, KeyError, TypeError):
-            log.warning("配置中的 best_ips 格式不正确，将重新选择")
+        except Exception as e:
+            log.warning(f"配置中的 best_ips 无法使用: {str(e)}")
     
+    # 增加超时时间，增强稳定性
+    timeout = max(timeout, 1.5)  # 减少超时时间到1.5秒，加快测试速度
+    
+    # 推荐的第一批测试服务器 - 这些通常是质量较好的
+    priority_ips = [
+        # 根据日志中实际可用的服务器优先测试
+        {"ip": "60.191.117.167", "port": 7709},  # 日志中可用
+        {"ip": "180.153.18.170", "port": 7709},  # 日志中可用
+        {"ip": "218.75.126.9", "port": 7709},    # 日志中可用
+        {"ip": "sztdx.gtjas.com", "port": 7709}, # 日志中可用
+        {"ip": "shtdx.gtjas.com", "port": 7709}, # 日志中可用
+        # 加入一些常用服务器作为后备
+        {"ip": "119.147.212.81", "port": 7709},  # 深圳新增主站1
+        {"ip": "47.107.75.159", "port": 7709},   # 深圳新增主站2
+        {"ip": "114.80.80.222", "port": 7711}    # 上海行情主站
+    ]
+    
+    # 测试一个股票是否可以获取数据的函数 - 简单但有效的测试
+    def can_get_stock_data(api):
+        try:
+            # 使用已知通常可以获取数据的股票代码
+            test_stock = "000001"  # 平安银行
+            df = api.get_security_bars(9, 0, test_stock, 0, 1)
+            return df is not None and len(df) > 0
+        except:
+            return False
+        
     # 并行测试多个IP的响应时间
     def test_connection(ip_port):
         ip, port = ip_port['ip'], ip_port['port']
@@ -266,37 +335,85 @@ def select_best_ip_list(n=5, timeout=1.0, ip_list=None):
         try:
             start = time.time()
             with api.connect(ip, port, time_out=timeout):
-                if len(api.get_security_list(0, 1)) > 0:  # 测试连接有效性
-                    cost = time.time() - start
-                    return {'ip': ip, 'port': port, 'cost': cost}
-        except Exception:
-            pass
+                # 测试连接有效性 - 先试简单的API
+                try:
+                    if api.get_security_count(0) > 0:
+                        # 进一步测试是否可以获取股票数据
+                        if can_get_stock_data(api):
+                            cost = time.time() - start
+                            log.info(f"找到有效服务器 {ip}:{port}，响应时间 {cost:.3f}秒")
+                            return {'ip': ip, 'port': port, 'cost': cost}
+                        else:
+                            log.debug(f"服务器 {ip}:{port} 连接成功但无法获取股票数据")
+                    else:
+                        log.debug(f"服务器 {ip}:{port} 连接成功但 get_security_count 失败")
+                except Exception as inner_e:
+                    # 如果 get_security_count 失败，尝试其他简单的API
+                    try:
+                        if len(api.get_security_list(0, 1)) > 0:
+                            # 同样测试是否可以获取股票数据
+                            if can_get_stock_data(api):
+                                cost = time.time() - start
+                                log.info(f"找到备用有效服务器 {ip}:{port}，响应时间 {cost:.3f}秒")
+                                return {'ip': ip, 'port': port, 'cost': cost}
+                            else:
+                                log.debug(f"备用服务器 {ip}:{port} 连接成功但无法获取股票数据")
+                        else:
+                            log.debug(f"备用服务器 {ip}:{port} 连接成功但 get_security_list 失败")
+                    except:
+                        pass
+        except Exception as e:
+            log.debug(f"测试服务器 {ip}:{port} 连接失败: {str(e)[:100]}")  # 截断错误信息
         return None
     
-    # 只测试前30个IP，避免耗时过长
-    test_ips = ip_list[:30]
+    # 两阶段测试 - 先测试优先级服务器
     results = []
-    
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [executor.submit(test_connection, ip_port) for ip_port in test_ips]
+    with ThreadPoolExecutor(max_workers=10) as executor:  # 增加并行度，加快测试速度
+        futures = [executor.submit(test_connection, ip_port) for ip_port in priority_ips]
         for future in as_completed(futures):
             result = future.result()
             if result:
                 results.append(result)
                 if len(results) >= n:
-                    # 一旦找到足够数量的IP就停止等待其他测试
-                    for f in futures:
-                        if not f.done():
-                            f.cancel()
+                    # 发现足够的服务器，停止等待
                     break
+    
+    # 如果优先服务器没找到足够的，再测试更多服务器
+    if len(results) < n:
+        log.info(f"从优先服务器中只找到 {len(results)} 个可用，继续测试其他服务器")
+        # 排除已测试的服务器
+        priority_ips_set = {(ip['ip'], ip['port']) for ip in priority_ips}
+        remaining_ips = [ip for ip in ip_list if (ip['ip'], ip['port']) not in priority_ips_set]
+        
+        # 随机抽取更多服务器测试，提高找到可用服务器的概率
+        test_sample = random.sample(remaining_ips, min(20, len(remaining_ips)))  # 减少测试数量，加快速度
+        
+        with ThreadPoolExecutor(max_workers=20) as executor:  # 增加并行度，加快测试速度
+            futures = [executor.submit(test_connection, ip_port) for ip_port in test_sample]
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    results.append(result)
+                    if len(results) >= n:
+                        break
+    
+    # 确保至少返回一个结果 - 即使测试全部失败
+    if not results:
+        log.warning("未找到可用的通达信服务器，使用默认服务器列表")
+        # 返回更多经常可用的默认服务器
+        default_servers = [
+            ('119.147.212.81', 7709),  # 深圳新增主站1
+            ('47.107.75.159', 7709),   # 深圳新增主站2
+            ('47.93.52.95', 7709),     # 阿里云主站
+            ('101.132.35.193', 7709),  # 上海新增主站1
+            ('114.80.80.222', 7711),   # 上海
+            ('113.105.73.88', 7711),   # 深圳
+            ('106.120.74.86', 7711)    # 北京
+        ]
+        return default_servers[:n]
     
     # 按响应时间排序
     results.sort(key=lambda x: x['cost'])
-    
-    # 如果找不到足够的IP，使用默认的
-    if not results:
-        log.warning("未找到可用的通达信服务器，使用默认服务器")
-        return [(stock_ip_list[0]['ip'], stock_ip_list[0]['port'])]
     
     # 返回最快的n个
     best_ips = results[:min(n, len(results))]
@@ -306,10 +423,13 @@ def select_best_ip_list(n=5, timeout=1.0, ip_list=None):
     
     # 保存到配置
     try:
-        from qff.tools.config import set_config
         set_config('IPLIST', 'best_ips', json.dumps(best_ips))
     except Exception as e:
         log.warning(f"保存最佳IP列表到配置文件失败: {str(e)}")
+    
+    # 更新缓存
+    _CACHED_BEST_IPS = ip_ports
+    _CACHE_TIME = time.time()
     
     log.info(f"已选择 {len(ip_ports)} 个最佳服务器")
     return ip_ports

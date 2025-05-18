@@ -377,7 +377,10 @@ def fetch_concept_stocks(concept_code):
                         if val_df is not None and len(val_df) > 0:
                             val_df['code'] = val_df['code'].apply(lambda x: str(x).split('.')[-1])
                             val_map = dict(zip(val_df['code'], val_df['circulating_market_cap']))
-                            df['circ_mv'] = codes.map(val_map)
+                            if val_map:
+                                df['circ_mv'] = codes.map(val_map)
+                            else:
+                                df['circ_mv'] = None
                         else:
                             raise Exception('get_valuation返回空')
                     else:
@@ -395,9 +398,15 @@ def fetch_concept_stocks(concept_code):
                     try:
                         codes = df['code'].apply(lambda x: str(x).split('.')[-1])
                         mv_df = ak.stock_a_lg_indicator_em()
-                        mv_df['代码'] = mv_df['代码'].apply(lambda x: str(x).split('.')[-1])
-                        mv_map = dict(zip(mv_df['代码'], mv_df['流通市值']))
-                        df['circ_mv'] = codes.map(mv_map)
+                        if '流通市值' in mv_df.columns and '代码' in mv_df.columns:
+                            mv_map = dict(zip(mv_df['代码'], mv_df['流通市值']))
+                        else:
+                            mv_map = {}
+                            log.warning("流通市值字段缺失，无法补全流通市值")
+                        if mv_map:
+                            df['circ_mv'] = codes.map(mv_map)
+                        else:
+                            df['circ_mv'] = None
                     except Exception as e2:
                         log.warning(f"补全最新流通市值也失败: {e2}")
                         df['circ_mv'] = pd.NA
@@ -406,10 +415,16 @@ def fetch_concept_stocks(concept_code):
             if 'industry' not in df.columns and 'code' in df.columns:
                 try:
                     codes = df['code'].apply(lambda x: str(x).split('.')[-1])
-                    industry_df = ak.stock_industry_name_em()
-                    industry_df['代码'] = industry_df['代码'].apply(lambda x: str(x).split('.')[-1])
-                    ind_map = dict(zip(industry_df['代码'], industry_df['所属行业']))
-                    df['industry'] = codes.map(ind_map)
+                    industry_df = ak.stock_board_industry_cons_em(symbol="全部")
+                    if '所属行业' in industry_df.columns and '代码' in industry_df.columns:
+                        ind_map = dict(zip(industry_df['代码'], industry_df['所属行业']))
+                    else:
+                        ind_map = {}
+                        log.warning("所属行业字段缺失，无法补全所属行业")
+                    if ind_map:
+                        df['industry'] = codes.map(ind_map)
+                    else:
+                        df['industry'] = None
                 except Exception as e:
                     log.warning(f"补全所属行业失败: {e}")
                     df['industry'] = pd.NA

@@ -283,96 +283,27 @@ def fetch_margin_detail(date=None):
         df = None
         api_tried = []
         
-        # 尝试 stock_margin_detail_em API
-        try:
-            if hasattr(ak, 'stock_margin_detail_em'):
-                df = ak.stock_margin_detail_em(date=date)
-                log.info(f"使用 stock_margin_detail_em API 获取融资融券明细数据")
-                api_tried.append("stock_margin_detail_em")
-            else:
-                log.warning(f"akshare 模块没有 stock_margin_detail_em 属性")
-        except Exception as e:
-            log.warning(f"使用 stock_margin_detail_em API 失败: {str(e)}")
-        
         # 尝试 stock_margin_detail_sse API
-        if df is None or len(df) == 0:
+        if hasattr(ak, 'stock_margin_detail_sse'):
             try:
-                if hasattr(ak, 'stock_margin_detail_sse'):
-                    df = ak.stock_margin_detail_sse(date=date)
-                    log.info(f"使用 stock_margin_detail_sse API 获取融资融券明细数据")
-                    api_tried.append("stock_margin_detail_sse")
-                else:
-                    log.warning(f"akshare 模块没有 stock_margin_detail_sse 属性")
+                df = ak.stock_margin_detail_sse(date=date)
+                log.info(f"使用 stock_margin_detail_sse API 获取融资融券明细数据")
+                api_tried.append("stock_margin_detail_sse")
             except Exception as e:
                 log.warning(f"使用 stock_margin_detail_sse API 失败: {str(e)}")
-        
-        # 尝试 stock_margin_sse API
-        if df is None or len(df) == 0:
-            try:
-                if hasattr(ak, 'stock_margin_sse'):
-                    df = ak.stock_margin_sse(start_date=date, end_date=date)
-                    log.info(f"使用 stock_margin_sse API 获取融资融券明细数据")
-                    api_tried.append("stock_margin_sse")
-                else:
-                    log.warning(f"akshare 模块没有 stock_margin_sse 属性")
-            except Exception as e:
-                log.warning(f"使用 stock_margin_sse API 失败: {str(e)}")
-        
-        # 尝试 stock_margin_szse API
-        if df is None or len(df) == 0:
-            try:
-                if hasattr(ak, 'stock_margin_szse'):
-                    df = ak.stock_margin_szse(start_date=date_no_dash, end_date=date_no_dash)
-                    log.info(f"使用 stock_margin_szse API 获取融资融券明细数据")
-                    api_tried.append("stock_margin_szse")
-                else:
-                    log.warning(f"akshare 模块没有 stock_margin_szse 属性")
-            except Exception as e:
-                log.warning(f"使用 stock_margin_szse API 失败: {str(e)}")
-        
-        # 尝试任何其他可能相关的API
-        if df is None or len(df) == 0:
-            # 获取akshare模块中所有包含"margin"的函数，作为可能的候选API
-            margin_api_candidates = [attr for attr in dir(ak) 
-                                  if attr.startswith('stock_margin') and callable(getattr(ak, attr))]
-            log.info(f"找到以下潜在的融资融券相关API: {margin_api_candidates}")
-            
-            # 尝试这些候选API
-            for api_name in margin_api_candidates:
-                if api_name in api_tried:
-                    continue
-                    
-                try:
-                    api_func = getattr(ak, api_name)
-                    # 尝试不同的参数组合
-                    param_combinations = [
-                        {'date': date},
-                        {'start_date': date, 'end_date': date},
-                        {'start_date': date_no_dash, 'end_date': date_no_dash},
-                        {'trade_date': date}
-                    ]
-                    
-                    for params in param_combinations:
-                        try:
-                            result = api_func(**params)
-                            if isinstance(result, pd.DataFrame) and len(result) > 0:
-                                df = result
-                                log.info(f"使用 {api_name} API 成功获取融资融券数据")
-                                api_tried.append(api_name)
-                                break
-                        except Exception:
-                            continue
-                    
-                    if df is not None and len(df) > 0:
-                        break
-                        
-                except Exception as e:
-                    log.warning(f"尝试使用 {api_name} API 时出错: {str(e)}")
-        
-        if api_tried:
-            log.info(f"尝试了以下API获取融资融券数据: {', '.join(api_tried)}")
         else:
-            log.error(f"没有可用的API获取融资融券数据")
+            log.warning(f"akshare 模块没有 stock_margin_detail_sse 属性")
+        
+        # 尝试 stock_margin_detail_szse API
+        if hasattr(ak, 'stock_margin_detail_szse'):
+            try:
+                df = ak.stock_margin_detail_szse(date=date)
+                log.info(f"使用 stock_margin_detail_szse API 获取融资融券明细数据")
+                api_tried.append("stock_margin_detail_szse")
+            except Exception as e:
+                log.warning(f"使用 stock_margin_detail_szse API 失败: {str(e)}")
+        else:
+            log.warning(f"akshare 模块没有 stock_margin_detail_szse 属性")
         
         if df is not None and len(df) > 0:
             # 重命名列 - 列名可能因为API变化而不同
