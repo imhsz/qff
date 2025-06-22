@@ -117,7 +117,7 @@ def auto_file_name(path):
     """
     directory, file_name = os.path.split(path)
     while os.path.isfile(path):
-        pattern = '(\d+)\)\.'
+        pattern = r'(\d+)\)\.'
         if re.search(pattern, file_name) is None:
             file_name = file_name.replace('.', '(0).')
         else:
