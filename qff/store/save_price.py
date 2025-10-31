@@ -337,36 +337,74 @@ def calc_qfq_cof(bfq: pd.DataFrame, xdxr: pd.DataFrame) -> Optional[pd.DataFrame
     计算前复权系数
     :param bfq: 被复权股票ochl数据
     :param xdxr: 股票对应的xdxr数据
-    :return: 在bfq数据后面增加一列 'adj' 保存对应的前复权系数，返回空表示复权系数均为1
+    :return: 在bfq数据后面增加一列 'qfq' 保存对应的前复权系数，返回空表示复权系数均为1
     """
     info = xdxr.query('category==1')
-    info = info.loc[bfq.index[1]:bfq.index[-1]]  # 注意取index[1],复权系数的变化是除权日上一个交易日
+    # 修复：正确处理索引范围，确保包含所有需要复权的日期
+    if len(bfq.index) > 1:
+        info = info.loc[bfq.index[0]:bfq.index[-1]]  # 从第一个交易日到最后一个交易日
+    elif len(bfq.index) == 1:
+        info = info.loc[bfq.index[0]:bfq.index[0]]
+    else:
+        info = pd.DataFrame()
 
     if len(info) > 0:
-        bfq['qfq'] = np.NAN
-        cof = 1
-        for i in range(len(info)-1, -1, -1):  # 前复权倒序
+        bfq = bfq.copy()  # 创建副本避免修改原始数据
+        bfq['qfq'] = 1.0  # 初始化为1
+        
+        # 前复权：从后往前计算，保持最新价格不变，调整历史价格
+        adj_factors = {}  # 存储每个日期的复权因子
+        
+        for i in range(len(info)-1, -1, -1):  # 倒序处理
             r = info.iloc[i]
-            _date = util_get_date_gap(info.index[i], -1)  #
+            xdxr_date = info.index[i]  # 除权除息日期
+            _date = get_pre_trade_day(xdxr_date)  # 除权日前一个交易日
+
+            # 确保日期在数据范围内
+            if _date not in bfq.index:
+                continue
 
             try:
-                raw_close = bfq.loc[_date, 'close']  # 原始收盘价
+                raw_close = bfq.loc[_date, 'close']  # 除权日前一天的收盘价
             except KeyError:
-                while _date not in bfq.index.to_list():
-                    _date = util_get_date_gap(_date, -1)
-                raw_close = bfq.loc[_date, 'close']
+                continue
 
-            fq_close = (raw_close * 10 - r['fenhong'] + r['peigu'] * r['peigujia']) / \
-                       (10 + r['peigu'] + r['songzhuangu'])   # 复权后的收盘价
-            cof = cof * (fq_close / raw_close)  # 计算系数 累乘
-            bfq.loc[_date, 'qfq'] = cof
+            # 避免除零错误
+            if raw_close == 0:
+                continue
 
-        bfq['qfq'] = bfq['qfq'].fillna(method='bfill').fillna(1)
+            # 计算复权后的收盘价
+            numerator = raw_close * 10 - r['fenhong'] + r['peigu'] * r['peigujia']
+            denominator = 10 + r['peigu'] + r['songzhuangu']
+            
+            if denominator == 0:
+                continue
+                
+            fq_close = numerator / denominator
+            
+            # 前复权系数计算：复权价格/原始价格
+            if raw_close != 0:
+                adj_factor = fq_close / raw_close
+                adj_factors[_date] = adj_factor
+
+        # 应用复权因子
+        if adj_factors:
+            # 按日期排序
+            sorted_dates = sorted(adj_factors.keys(), reverse=True)  # 从最近的日期开始
+            
+            # 从前一个交易日开始向前应用复权因子
+            cumulative_factor = 1.0
+            for date in bfq.index[::-1]:  # 从后向前遍历
+                # 如果该日期有复权事件，更新累积因子
+                if date in adj_factors:
+                    cumulative_factor *= adj_factors[date]
+                
+                # 应用累积因子
+                bfq.loc[date, 'qfq'] = cumulative_factor
 
         return bfq
     else:
-
-        return None    # 回复空表示不保存复权系数，
+        return None  # 返回空表示不保存复权系数
 
 
 def calc_hfq_cof(bfq: pd.DataFrame, xdxr: pd.DataFrame) -> Optional[pd.DataFrame]:
@@ -374,38 +412,74 @@ def calc_hfq_cof(bfq: pd.DataFrame, xdxr: pd.DataFrame) -> Optional[pd.DataFrame
     计算后复权系数
     :param bfq: 被复权股票ochl数据
     :param xdxr: 股票对应的xdxr数据
-    :return: 在bfq数据后面增加一列 'adj' 保存对应的后复权系数，返回空表示复权系数均为1
+    :return: 在bfq数据后面增加一列 'hfq' 保存对应的后复权系数，返回空表示复权系数均为1
     """
-
     info = xdxr.query('category==1')
-    info = info.loc[bfq.index[1]:bfq.index[-1]]  # 注意取index[1],复权系数计算需用到前一天的收盘价
+    # 修复：正确处理索引范围，确保包含所有需要复权的日期
+    if len(bfq.index) > 1:
+        info = info.loc[bfq.index[0]:bfq.index[-1]]  # 从第一个交易日到最后一个交易日
+    elif len(bfq.index) == 1:
+        info = info.loc[bfq.index[0]:bfq.index[0]]
+    else:
+        info = pd.DataFrame()
 
     if len(info) > 0:
-        bfq['hfq'] = np.NAN
-        cof = 1
-        for i in range(len(info)):  # 前复权倒序
+        bfq = bfq.copy()  # 创建副本避免修改原始数据
+        bfq['hfq'] = 1.0  # 初始化为1
+        
+        # 后复权：从前往后计算，保持历史价格不变，调整最新价格
+        adj_factors = {}  # 存储每个日期的复权因子
+        
+        for i in range(len(info)):  # 正序处理
             r = info.iloc[i]
-            xdxr_date = get_real_trade_date(info.index[i], towards=1)
-            _date = get_pre_trade_day(xdxr_date)
+            xdxr_date = info.index[i]  # 除权除息日期
+            _date = get_pre_trade_day(xdxr_date)  # 除权日前一个交易日
+
+            # 确保日期在数据范围内
+            if _date not in bfq.index:
+                continue
 
             try:
-                pre_close = bfq.loc[_date, 'close']  # 前一天收盘价,处理停牌缺失数据情况
+                pre_close = bfq.loc[_date, 'close']  # 除权日前一天的收盘价
             except KeyError:
-                while _date not in bfq.index.to_list():
-                    _date = get_pre_trade_day(_date)
-                pre_close = bfq.loc[_date, 'close']
+                continue
 
-            fq_close = (pre_close * 10 - r['fenhong'] + r['peigu'] * r['peigujia']) / \
-                       (10 + r['peigu'] + r['songzhuangu'])   # 复权后的收盘价
-            cof = cof * (pre_close / fq_close)  # 计算系数 累乘
-            bfq.loc[xdxr_date, 'hfq'] = cof
+            # 避免除零错误
+            if pre_close == 0:
+                continue
 
-        bfq['hfq'] = bfq['hfq'].fillna(method='ffill').fillna(1)
+            # 计算复权后的收盘价
+            numerator = pre_close * 10 - r['fenhong'] + r['peigu'] * r['peigujia']
+            denominator = 10 + r['peigu'] + r['songzhuangu']
+            
+            if denominator == 0:
+                continue
+                
+            fq_close = numerator / denominator
+            
+            # 后复权系数计算：原始价格/复权价格
+            if fq_close != 0:
+                adj_factor = pre_close / fq_close
+                adj_factors[xdxr_date] = adj_factor
+
+        # 应用复权因子
+        if adj_factors:
+            # 按日期排序
+            sorted_dates = sorted(adj_factors.keys())
+            
+            # 从除权除息日开始向后应用复权因子
+            cumulative_factor = 1.0
+            for date in bfq.index:  # 从前向后遍历
+                # 如果该日期有复权事件，更新累积因子
+                if date in adj_factors:
+                    cumulative_factor *= adj_factors[date]
+                
+                # 应用累积因子
+                bfq.loc[date, 'hfq'] = cumulative_factor
 
         return bfq
     else:
-        # bfq['adj'] = 1.0
-        return None    # 回复空表示不保存复权系数，
+        return None  # 返回空表示不保存复权系数
 
 
 if __name__ == '__main__':

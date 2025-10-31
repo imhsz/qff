@@ -60,7 +60,7 @@ def save_mtss_by_day(date, err):
         sz_data['sec_value'] = sz_data['sec_value'].apply(lambda x: int(str(x).replace(',', '')))
         sz_data['sec_sell_value'] = sz_data['sec_sell_value'].apply(lambda x: int(str(x).replace(',', '')))
         sz_data.code = sz_data.code.apply(lambda x: ('00000' + str(x))[-6:])
-        sz_data = sz_data.assign(date=date, sse='sz', fin_refund_value=np.NAN, sec_refund_value=np.NAN)
+        sz_data = sz_data.assign(date=date, sse='sz', fin_refund_value=np.nan, sec_refund_value=np.nan)
         sz_data = sz_data[["date", "code", "name", 'fin_value', 'fin_buy_value', 'fin_refund_value',
                            'sec_value', 'sec_sell_value', 'sec_refund_value', 'sse']]
 

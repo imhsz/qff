@@ -180,13 +180,19 @@ def get_price(security, start=None, end=None, freq='daily', fields=None, skip_pa
         projection.update({f: 1 for f in field_list[:6]})
 
     # 5. 数据库查询优化
-    coll = DATABASE.get_collection(f'{market}_{freq[-3:]}')
+    # Fix collection name generation for daily frequency
+    if freq in ['daily', '1d', 'day']:
+        collection_suffix = 'day'
+    else:
+        collection_suffix = 'min'
+    
+    coll = DATABASE.get_collection(f'{market}_{collection_suffix}')
     filter = {
         'code': {'$in': code},
         date_index: {'$gte': start, '$lte': end}
     }
     
-    if freq != 'day':
+    if freq not in ['daily', '1d', 'day']:
         filter['type'] = freq
 
     # 使用批量查询提升性能
@@ -212,24 +218,47 @@ def get_price(security, start=None, end=None, freq='daily', fields=None, skip_pa
         )))
         
         if not adj_data.empty:
+            # 修复：正确处理日期索引
             if date_index == 'datetime':
-                data['date'] = data['datetime'].str[:10]
-            data.set_index(['date', 'code'], inplace=True)
+                # 对于分钟数据，需要提取日期部分进行关联
+                data['_date'] = data['datetime'].str[:10]
+                data.set_index(['_date', 'code'], inplace=True)
+            else:
+                # 对于日线数据，直接使用date字段
+                data.set_index(['date', 'code'], inplace=True)
+                
             adj_data.set_index(['date', 'code'], inplace=True)
             
             # 复权因子处理
             data = data.join(adj_data, how='left')
-            factor = data['qfq'] if fq == 'pre' else data['hfq']
-            factor = factor.fillna(1) if fq == 'pre' else factor.fillna(method='ffill')
             
-            # 价格复权
-            price_cols = ['open', 'high', 'low', 'close']
-            data[price_cols] = data[price_cols].multiply(factor, axis=0).round(2)
+            # 选择复权因子并处理缺失值
+            factor_col = 'qfq' if fq == 'pre' else 'hfq'
+            if factor_col in data.columns:
+                # 处理缺失的复权因子
+                if fq == 'pre':
+                    # 前复权：最新复权因子为1，向前填充
+                    data[factor_col] = data[factor_col].fillna(method='ffill').fillna(1)
+                else:
+                    # 后复权：历史复权因子为1，向后填充
+                    data[factor_col] = data[factor_col].fillna(method='bfill').fillna(1)
+                
+                # 价格复权
+                price_cols = ['open', 'high', 'low', 'close']
+                # 只对存在的列进行复权
+                existing_price_cols = [col for col in price_cols if col in data.columns]
+                if existing_price_cols:
+                    data[existing_price_cols] = data[existing_price_cols].multiply(data[factor_col], axis=0)
+                    # 保留两位小数
+                    data[existing_price_cols] = data[existing_price_cols].round(2)
+                
+                # 删除复权因子列
+                data = data.drop([col for col in ['qfq', 'hfq'] if col in data.columns], axis=1)
             
-            data = data.drop(['qfq', 'hfq'], axis=1)
+            # 恢复索引
             data.reset_index(inplace=True)
-            if date_index == 'datetime':
-                data.drop('date', axis=1, inplace=True)
+            if date_index == 'datetime' and '_date' in data.columns:
+                data.drop('_date', axis=1, inplace=True)
         else:
             log.debug("get_price获取复权因子失败！返回未复权值")
 
