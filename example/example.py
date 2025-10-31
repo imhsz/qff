@@ -1,5 +1,3 @@
-
-
 from qff import *
 
 strategy_name = "样例策略文件"
@@ -9,7 +7,7 @@ def initialize(context):
     log.info("{} : 初始化运行".format(strategy_name))
 
     # 设置指数基准
-    set_benchmark(security="000300")
+    set_benchmark(security="000001")
 
 
 def before_trading_start(context):
@@ -32,5 +30,5 @@ def on_strategy_end(context):
     pass
 
 
-if __name__ == '__main__':
-    run_file(__file__, start="2021-08-27", end="2022-03-25", name=strategy_name)
+if __name__ == "__main__":
+    run_file(__file__, start="2025-08-01", end="2025-09-30", name=strategy_name)
