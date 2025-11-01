@@ -338,7 +338,7 @@ def order_value(security, value, price=None, callback=None):
     按股票价值下单
 
     :param security: 股票代码
-    :param value: 股票价值，value = 最新价 * 手数  * 乘数（股票为100）
+    :param value: 下单股票价值，正数表示买入，负数表示卖出
     :param price: 下单价格，市价单可不填价格，按当前最新价格挂单
     :param callback: 回调函数，订单成交/取消后调用执行， callback(status)
 
@@ -355,6 +355,11 @@ def order_value(security, value, price=None, callback=None):
         return None
 
     cur_data = get_current_data(security)
+
+    # 检查当前价格是否可用
+    if cur_data.last_price is None:
+        log.error(f"无法获取股票 {security} 的当前价格，下单失败")
+        return None
 
     slippage = context.slippage if value > 0 else -context.slippage
     order_price = price if price is not None else cur_data.last_price * (1 + slippage)
@@ -430,6 +435,12 @@ def order_target_value(security, value, price=None, callback=None):
     """
     log.debug('调用order_target_value' + str(locals()).replace('{', '(').replace('}', ')'))
     order_price = get_current_data(security).last_price
+    
+    # 检查当前价格是否可用
+    if order_price is None:
+        log.error(f"无法获取股票 {security} 的当前价格，下单失败")
+        return None
+        
     amount = int(value / order_price)
     return order_target(security, amount, price, callback)
 

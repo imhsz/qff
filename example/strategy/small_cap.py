@@ -80,7 +80,12 @@ def handle_data(context, data):
         # 买入股票
         for stock in stock_list:
             if len(context.portfolio.positions.keys()) < g.stock_num:
-                order_value(stock, Cash)
+                # 检查股票代码是否有效
+                cur_data = get_current_data(stock)
+                if cur_data is not None and cur_data.last_price is not None:
+                    order_value(stock, Cash)
+                else:
+                    log.warning(f"股票 {stock} 数据不可用，跳过下单")
 
         # 天计数加一
         g.days = 1
@@ -89,4 +94,4 @@ def handle_data(context, data):
 
 
 if __name__ == '__main__':
-    run_file(__file__, start="2021-08-27", end="2022-03-25")
+    run_file(__file__, start="2025-08-27", end="2025-09-25")

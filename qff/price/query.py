@@ -115,7 +115,6 @@ def get_price(security, start=None, end=None, freq='daily', fields=None, skip_pa
 
 
     """
-    log.info('hello........................')
     log.debug('调用get_price' + str(locals()).replace('{', '(').replace('}', ')'))
     
     # 1. 参数验证优化 - 使用集合判断
