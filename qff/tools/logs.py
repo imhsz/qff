@@ -64,8 +64,10 @@ class Log:
         self.console = logging.StreamHandler()
         formatter = logging.Formatter('qff>> %(message)s')
         self.console.setFormatter(formatter)
-        logging.getLogger().addHandler(self.console)
-        self.console_show = True
+        self.console_show = False
+        # logging.getLogger('qff').addHandler(self.console)
+        # self.console_show = True
+
         log_level = get_config('LOG', 'level', 'info')
         self.set_level(log_level)
 
@@ -117,10 +119,10 @@ class Log:
         开关日志终端显示
         """
         if self.console_show:
-            logging.getLogger().removeHandler(self.console)
+            logging.getLogger('qff').removeHandler(self.console)
             self.console_show = False
         else:
-            logging.getLogger().addHandler(self.console)
+            logging.getLogger('qff').addHandler(self.console)
             self.console_show = True
 
 
